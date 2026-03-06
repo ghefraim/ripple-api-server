@@ -100,6 +100,14 @@ public static class InfrastructureServiceConfiguration
             services.AddScoped<IFlightDataProvider, LocalFlightDataProvider>();
         }
 
+        services.AddHttpClient("GeminiLlm");
+
+        var llmProvider = configuration.GetValue<string>("LlmProvider") ?? "Gemini";
+        if (llmProvider == "Gemini")
+        {
+            services.AddScoped<ILlmProvider, GeminiLlmProvider>();
+        }
+
         return services;
     }
 }
