@@ -1,21 +1,13 @@
 ﻿using Api.Hubs;
 using Api.Middleware;
 
-using Application.Infrastructure.Persistence;
-
 namespace Api;
 
 public static class ConfigurePipeline
 {
     public static async Task<WebApplication> ConfigurePipelineAsync(this WebApplication app)
     {
-        using var loggerFactory = LoggerFactory.Create(builder => { });
-        using var scope = app.Services.CreateScope();
-        if (app.Environment.IsDevelopment())
-        {
-            await app.InitialiseDatabaseAsync();
-        }
-        else
+        if (!app.Environment.IsDevelopment())
         {
             // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
             app.UseHsts();

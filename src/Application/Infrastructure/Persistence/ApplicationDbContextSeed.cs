@@ -1,17 +1,101 @@
-﻿using Application.Domain.Entities;
+using Application.Domain.Entities;
 using Application.Domain.Enums;
 
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 namespace Application.Infrastructure.Persistence;
 
 public static class ApplicationDbContextSeed
 {
-    public static async Task SeedSampleDataAsync(ApplicationDbContext context)
+    public static async Task SeedSampleDataAsync(ApplicationDbContext context, UserManager<ApplicationUser> userManager)
     {
         await SeedPlansAsync(context);
         await SeedTodoListsAsync(context);
-        await SeedAirportDataAsync(context);
+        var org = await SeedDemoUsersAsync(context, userManager);
+        if (org != null)
+        {
+            await SeedAirportForOrganizationAsync(context, org.Id);
+        }
+        else
+        {
+            await SeedAirportDataAsync(context);
+        }
+    }
+
+    private static async Task<Organization?> SeedDemoUsersAsync(ApplicationDbContext context, UserManager<ApplicationUser> userManager)
+    {
+        // Check if demo org already exists
+        var existingOrg = await context.Organizations
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(o => o.Name == "Ripple Demo");
+
+        if (existingOrg != null)
+            return null;
+
+        // Create demo users
+        var demoUsers = new[]
+        {
+            new { Email = "admin@ripple.demo", UserName = "admin@ripple.demo", Password = "Demo123!", Role = OrganizationRole.Owner },
+            new { Email = "ops@ripple.demo", UserName = "ops@ripple.demo", Password = "Demo123!", Role = OrganizationRole.Member },
+            new { Email = "crew@ripple.demo", UserName = "crew@ripple.demo", Password = "Demo123!", Role = OrganizationRole.Member },
+        };
+
+        var createdUsers = new List<(ApplicationUser User, OrganizationRole Role)>();
+        foreach (var demo in demoUsers)
+        {
+            var existing = await userManager.FindByEmailAsync(demo.Email);
+            if (existing != null)
+            {
+                createdUsers.Add((existing, demo.Role));
+                continue;
+            }
+
+            var user = new ApplicationUser
+            {
+                Email = demo.Email,
+                UserName = demo.UserName,
+                EmailConfirmed = true,
+                CreatedOn = DateTime.UtcNow,
+            };
+
+            var result = await userManager.CreateAsync(user, demo.Password);
+            if (!result.Succeeded)
+                continue;
+
+            await userManager.AddToRoleAsync(user, "User");
+            createdUsers.Add((user, demo.Role));
+        }
+
+        if (createdUsers.Count == 0)
+            return null;
+
+        // Create demo organization
+        var org = new Organization
+        {
+            Name = "Ripple Demo",
+            Description = "Demo airport operations workspace",
+            CreatedOn = DateTime.UtcNow,
+            CreatedBy = "seed",
+        };
+        context.Organizations.Add(org);
+        await context.SaveChangesAsync();
+
+        // Link users to org
+        foreach (var (user, role) in createdUsers)
+        {
+            context.UserOrganizations.Add(new UserOrganization
+            {
+                UserId = user.Id,
+                OrganizationId = org.Id,
+                Role = role,
+                CreatedOn = DateTime.UtcNow,
+                CreatedBy = "seed",
+            });
+        }
+
+        await context.SaveChangesAsync();
+        return org;
     }
 
     private static async Task SeedPlansAsync(ApplicationDbContext context)
@@ -54,7 +138,6 @@ public static class ApplicationDbContextSeed
         context.Plans.AddRange(freePlan, proPlan, enterprisePlan);
         await context.SaveChangesAsync();
 
-        // Seed Free Plan Features
         var freePlanFeatures = new List<PlanFeature>
         {
             new() { PlanId = freePlan.Id, FeatureKey = "maxMembers", FeatureType = "limit", Value = "3" },
@@ -63,20 +146,18 @@ public static class ApplicationDbContextSeed
             new() { PlanId = freePlan.Id, FeatureKey = "apiAccess", FeatureType = "boolean", Value = "false" },
         };
 
-        // Seed Pro Plan Features
         var proPlanFeatures = new List<PlanFeature>
         {
             new() { PlanId = proPlan.Id, FeatureKey = "maxMembers", FeatureType = "limit", Value = "10" },
-            new() { PlanId = proPlan.Id, FeatureKey = "maxTodoLists", FeatureType = "limit", Value = "unlimited" }, // -1 = unlimited
+            new() { PlanId = proPlan.Id, FeatureKey = "maxTodoLists", FeatureType = "limit", Value = "unlimited" },
             new() { PlanId = proPlan.Id, FeatureKey = "canExport", FeatureType = "boolean", Value = "true" },
             new() { PlanId = proPlan.Id, FeatureKey = "apiAccess", FeatureType = "boolean", Value = "true" },
         };
 
-        // Seed Enterprise Plan Features
         var enterprisePlanFeatures = new List<PlanFeature>
         {
-            new() { PlanId = enterprisePlan.Id, FeatureKey = "maxMembers", FeatureType = "limit", Value = "unlimited" }, // -1 = unlimited
-            new() { PlanId = enterprisePlan.Id, FeatureKey = "maxTodoLists", FeatureType = "limit", Value = "unlimited" }, // -1 = unlimited
+            new() { PlanId = enterprisePlan.Id, FeatureKey = "maxMembers", FeatureType = "limit", Value = "unlimited" },
+            new() { PlanId = enterprisePlan.Id, FeatureKey = "maxTodoLists", FeatureType = "limit", Value = "unlimited" },
             new() { PlanId = enterprisePlan.Id, FeatureKey = "canExport", FeatureType = "boolean", Value = "true" },
             new() { PlanId = enterprisePlan.Id, FeatureKey = "apiAccess", FeatureType = "boolean", Value = "true" },
         };
@@ -90,7 +171,6 @@ public static class ApplicationDbContextSeed
 
     private static async Task SeedTodoListsAsync(ApplicationDbContext context)
     {
-        // Seed, if necessary
         if (!context.TodoLists.Any())
         {
             await context.SaveChangesAsync();
@@ -99,7 +179,6 @@ public static class ApplicationDbContextSeed
 
     private static async Task SeedAirportDataAsync(ApplicationDbContext context)
     {
-        // Seed airport data for each organization that doesn't have an airport config yet
         var organizations = await context.Organizations
             .IgnoreQueryFilters()
             .ToListAsync();
@@ -119,7 +198,13 @@ public static class ApplicationDbContextSeed
 
     private static async Task SeedAirportForOrganizationAsync(ApplicationDbContext context, Guid organizationId)
     {
-        // Create Cluj airport
+        var hasAirport = await context.AirportConfigs
+            .IgnoreQueryFilters()
+            .AnyAsync(a => a.OrganizationId == organizationId);
+
+        if (hasAirport)
+            return;
+
         var airport = new AirportConfig
         {
             OrganizationId = organizationId,
@@ -131,7 +216,6 @@ public static class ApplicationDbContextSeed
         context.AirportConfigs.Add(airport);
         await context.SaveChangesAsync();
 
-        // Seed 6 gates
         var gates = new List<Gate>
         {
             new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "A1", GateType = GateType.Domestic, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
@@ -143,7 +227,6 @@ public static class ApplicationDbContextSeed
         };
         context.Gates.AddRange(gates);
 
-        // Seed 5 ground crews with shift patterns
         var crews = new List<GroundCrew>
         {
             new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Alpha", ShiftStart = new TimeOnly(6, 0), ShiftEnd = new TimeOnly(14, 0), Status = CrewStatus.Available },
@@ -156,17 +239,12 @@ public static class ApplicationDbContextSeed
 
         await context.SaveChangesAsync();
 
-        // Seed flights
-        await SeedFlightsForOrganizationAsync(context, organizationId, airport.Id, gates, crews);
-
-        // Seed disruptions and cascade impacts
-        await SeedDisruptionsForOrganizationAsync(context, organizationId, airport.Id);
-
-        // Seed operational rules
-        await SeedRulesForOrganizationAsync(context, organizationId, airport.Id);
+        await SeedFlightsAsync(context, organizationId, airport.Id, gates, crews);
+        await SeedDisruptionsAsync(context, organizationId, airport.Id);
+        await SeedRulesAsync(context, organizationId, airport.Id);
     }
 
-    private static async Task SeedFlightsForOrganizationAsync(
+    private static async Task SeedFlightsAsync(
         ApplicationDbContext context,
         Guid organizationId,
         Guid airportId,
@@ -184,12 +262,11 @@ public static class ApplicationDbContextSeed
         var gateMap = gates.ToDictionary(g => g.Code, g => g.Id);
         var crewMap = crews.ToDictionary(c => c.Name, c => c.Id);
 
-        // Turnaround Pair 1 (demo pair — 45 min window): W6-2901 / W6-2902 at gate A3, crew Alpha
         var w6_2901 = new Flight
         {
             OrganizationId = organizationId, AirportId = airportId,
             FlightNumber = "W6-2901", Airline = "Wizz Air",
-            Origin = "London Luton", Destination = "Cluj-Napoca",
+            Origin = "LTN", Destination = "CLJ",
             Direction = FlightDirection.Arrival, FlightType = FlightType.International,
             Status = FlightStatus.OnTime,
             ScheduledTime = today.AddHours(10).AddMinutes(30),
@@ -200,7 +277,7 @@ public static class ApplicationDbContextSeed
         {
             OrganizationId = organizationId, AirportId = airportId,
             FlightNumber = "W6-2902", Airline = "Wizz Air",
-            Origin = "Cluj-Napoca", Destination = "London Luton",
+            Origin = "CLJ", Destination = "LTN",
             Direction = FlightDirection.Departure, FlightType = FlightType.International,
             Status = FlightStatus.OnTime,
             ScheduledTime = today.AddHours(11).AddMinutes(15),
@@ -208,12 +285,11 @@ public static class ApplicationDbContextSeed
             GateId = gateMap["A3"], CrewId = crewMap["Alpha"],
         };
 
-        // Turnaround Pair 2 (tight — 40 min): RO-361 / RO-362 at gate A1
         var ro_361 = new Flight
         {
             OrganizationId = organizationId, AirportId = airportId,
             FlightNumber = "RO-361", Airline = "TAROM",
-            Origin = "Bucharest Henri Coanda", Destination = "Cluj-Napoca",
+            Origin = "OTP", Destination = "CLJ",
             Direction = FlightDirection.Arrival, FlightType = FlightType.Domestic,
             Status = FlightStatus.OnTime,
             ScheduledTime = today.AddHours(8),
@@ -224,7 +300,7 @@ public static class ApplicationDbContextSeed
         {
             OrganizationId = organizationId, AirportId = airportId,
             FlightNumber = "RO-362", Airline = "TAROM",
-            Origin = "Cluj-Napoca", Destination = "Bucharest Henri Coanda",
+            Origin = "CLJ", Destination = "OTP",
             Direction = FlightDirection.Departure, FlightType = FlightType.Domestic,
             Status = FlightStatus.OnTime,
             ScheduledTime = today.AddHours(8).AddMinutes(40),
@@ -232,12 +308,11 @@ public static class ApplicationDbContextSeed
             GateId = gateMap["A1"], CrewId = crewMap["Beta"],
         };
 
-        // Turnaround Pair 3 (tight — 35 min): FR-1823 / FR-1824 at gate B1
         var fr_1823 = new Flight
         {
             OrganizationId = organizationId, AirportId = airportId,
             FlightNumber = "FR-1823", Airline = "Ryanair",
-            Origin = "Milan Bergamo", Destination = "Cluj-Napoca",
+            Origin = "BGY", Destination = "CLJ",
             Direction = FlightDirection.Arrival, FlightType = FlightType.International,
             Status = FlightStatus.OnTime,
             ScheduledTime = today.AddHours(12),
@@ -248,7 +323,7 @@ public static class ApplicationDbContextSeed
         {
             OrganizationId = organizationId, AirportId = airportId,
             FlightNumber = "FR-1824", Airline = "Ryanair",
-            Origin = "Cluj-Napoca", Destination = "Milan Bergamo",
+            Origin = "CLJ", Destination = "BGY",
             Direction = FlightDirection.Departure, FlightType = FlightType.International,
             Status = FlightStatus.OnTime,
             ScheduledTime = today.AddHours(12).AddMinutes(35),
@@ -256,12 +331,11 @@ public static class ApplicationDbContextSeed
             GateId = gateMap["B1"], CrewId = crewMap["Gamma"],
         };
 
-        // Turnaround Pair 4 (comfortable — 60 min): LH-1417 / LH-1418 at gate B2
         var lh_1417 = new Flight
         {
             OrganizationId = organizationId, AirportId = airportId,
             FlightNumber = "LH-1417", Airline = "Lufthansa",
-            Origin = "Munich", Destination = "Cluj-Napoca",
+            Origin = "MUC", Destination = "CLJ",
             Direction = FlightDirection.Arrival, FlightType = FlightType.International,
             Status = FlightStatus.OnTime,
             ScheduledTime = today.AddHours(14),
@@ -272,7 +346,7 @@ public static class ApplicationDbContextSeed
         {
             OrganizationId = organizationId, AirportId = airportId,
             FlightNumber = "LH-1418", Airline = "Lufthansa",
-            Origin = "Cluj-Napoca", Destination = "Munich",
+            Origin = "CLJ", Destination = "MUC",
             Direction = FlightDirection.Departure, FlightType = FlightType.International,
             Status = FlightStatus.OnTime,
             ScheduledTime = today.AddHours(15),
@@ -280,7 +354,6 @@ public static class ApplicationDbContextSeed
             GateId = gateMap["B2"], CrewId = crewMap["Delta"],
         };
 
-        // Standalone flights (no turnaround pair)
         var flights = new List<Flight>
         {
             w6_2901, w6_2902, ro_361, ro_362, fr_1823, fr_1824, lh_1417, lh_1418,
@@ -288,7 +361,7 @@ public static class ApplicationDbContextSeed
             {
                 OrganizationId = organizationId, AirportId = airportId,
                 FlightNumber = "W6-2907", Airline = "Wizz Air",
-                Origin = "Paris Beauvais", Destination = "Cluj-Napoca",
+                Origin = "BVA", Destination = "CLJ",
                 Direction = FlightDirection.Arrival, FlightType = FlightType.International,
                 Status = FlightStatus.OnTime,
                 ScheduledTime = today.AddHours(6).AddMinutes(30),
@@ -299,7 +372,7 @@ public static class ApplicationDbContextSeed
             {
                 OrganizationId = organizationId, AirportId = airportId,
                 FlightNumber = "W6-3105", Airline = "Wizz Air",
-                Origin = "Cluj-Napoca", Destination = "Dortmund",
+                Origin = "CLJ", Destination = "DTM",
                 Direction = FlightDirection.Departure, FlightType = FlightType.International,
                 Status = FlightStatus.OnTime,
                 ScheduledTime = today.AddHours(7),
@@ -310,7 +383,7 @@ public static class ApplicationDbContextSeed
             {
                 OrganizationId = organizationId, AirportId = airportId,
                 FlightNumber = "RO-371", Airline = "TAROM",
-                Origin = "Iasi", Destination = "Cluj-Napoca",
+                Origin = "IAS", Destination = "CLJ",
                 Direction = FlightDirection.Arrival, FlightType = FlightType.Domestic,
                 Status = FlightStatus.OnTime,
                 ScheduledTime = today.AddHours(9).AddMinutes(30),
@@ -321,7 +394,7 @@ public static class ApplicationDbContextSeed
             {
                 OrganizationId = organizationId, AirportId = airportId,
                 FlightNumber = "RO-391", Airline = "TAROM",
-                Origin = "Cluj-Napoca", Destination = "Iasi",
+                Origin = "CLJ", Destination = "IAS",
                 Direction = FlightDirection.Departure, FlightType = FlightType.Domestic,
                 Status = FlightStatus.OnTime,
                 ScheduledTime = today.AddHours(11),
@@ -332,7 +405,7 @@ public static class ApplicationDbContextSeed
             {
                 OrganizationId = organizationId, AirportId = airportId,
                 FlightNumber = "W6-2905", Airline = "Wizz Air",
-                Origin = "Cluj-Napoca", Destination = "Barcelona",
+                Origin = "CLJ", Destination = "BCN",
                 Direction = FlightDirection.Departure, FlightType = FlightType.International,
                 Status = FlightStatus.OnTime,
                 ScheduledTime = today.AddHours(13),
@@ -343,7 +416,7 @@ public static class ApplicationDbContextSeed
             {
                 OrganizationId = organizationId, AirportId = airportId,
                 FlightNumber = "FR-1831", Airline = "Ryanair",
-                Origin = "Brussels Charleroi", Destination = "Cluj-Napoca",
+                Origin = "CRL", Destination = "CLJ",
                 Direction = FlightDirection.Arrival, FlightType = FlightType.International,
                 Status = FlightStatus.OnTime,
                 ScheduledTime = today.AddHours(15).AddMinutes(30),
@@ -354,7 +427,7 @@ public static class ApplicationDbContextSeed
             {
                 OrganizationId = organizationId, AirportId = airportId,
                 FlightNumber = "RO-381", Airline = "TAROM",
-                Origin = "Cluj-Napoca", Destination = "Timisoara",
+                Origin = "CLJ", Destination = "TSR",
                 Direction = FlightDirection.Departure, FlightType = FlightType.Domestic,
                 Status = FlightStatus.OnTime,
                 ScheduledTime = today.AddHours(16),
@@ -365,7 +438,7 @@ public static class ApplicationDbContextSeed
             {
                 OrganizationId = organizationId, AirportId = airportId,
                 FlightNumber = "W6-2911", Airline = "Wizz Air",
-                Origin = "Rome Fiumicino", Destination = "Cluj-Napoca",
+                Origin = "FCO", Destination = "CLJ",
                 Direction = FlightDirection.Arrival, FlightType = FlightType.International,
                 Status = FlightStatus.OnTime,
                 ScheduledTime = today.AddHours(17),
@@ -376,7 +449,7 @@ public static class ApplicationDbContextSeed
             {
                 OrganizationId = organizationId, AirportId = airportId,
                 FlightNumber = "LH-1419", Airline = "Lufthansa",
-                Origin = "Cluj-Napoca", Destination = "Frankfurt",
+                Origin = "CLJ", Destination = "FRA",
                 Direction = FlightDirection.Departure, FlightType = FlightType.International,
                 Status = FlightStatus.OnTime,
                 ScheduledTime = today.AddHours(18),
@@ -387,7 +460,7 @@ public static class ApplicationDbContextSeed
             {
                 OrganizationId = organizationId, AirportId = airportId,
                 FlightNumber = "FR-1841", Airline = "Ryanair",
-                Origin = "Cluj-Napoca", Destination = "Madrid",
+                Origin = "CLJ", Destination = "MAD",
                 Direction = FlightDirection.Departure, FlightType = FlightType.International,
                 Status = FlightStatus.OnTime,
                 ScheduledTime = today.AddHours(19),
@@ -399,27 +472,22 @@ public static class ApplicationDbContextSeed
         context.Flights.AddRange(flights);
         await context.SaveChangesAsync();
 
-        // Set turnaround pair references (each flight points to its pair)
         w6_2901.TurnaroundPairId = w6_2902.Id;
         w6_2902.TurnaroundPairId = w6_2901.Id;
-
         ro_361.TurnaroundPairId = ro_362.Id;
         ro_362.TurnaroundPairId = ro_361.Id;
-
         fr_1823.TurnaroundPairId = fr_1824.Id;
         fr_1824.TurnaroundPairId = fr_1823.Id;
-
         lh_1417.TurnaroundPairId = lh_1418.Id;
         lh_1418.TurnaroundPairId = lh_1417.Id;
 
-        // Update crew status to Assigned for crews with flights
         var alphaCrewEntity = crews.First(c => c.Name == "Alpha");
         alphaCrewEntity.Status = CrewStatus.Assigned;
 
         await context.SaveChangesAsync();
     }
 
-    private static async Task SeedDisruptionsForOrganizationAsync(
+    private static async Task SeedDisruptionsAsync(
         ApplicationDbContext context,
         Guid organizationId,
         Guid airportId)
@@ -439,57 +507,47 @@ public static class ApplicationDbContextSeed
         var flightMap = flights.ToDictionary(f => f.FlightNumber, f => f);
         var now = DateTime.UtcNow;
 
-        // NOTE: W6-2901 / W6-2902 are intentionally NOT pre-disrupted.
-        // They are the primary live demo pair: user reports a 55-min delay on W6-2901
-        // to demonstrate cascade analysis (gate conflict, turnaround breach, crew gap)
-        // and LLM action plan generation in real-time via SignalR.
-
         // Disruption 1: FR-1823 gate change due to maintenance on B1
-        var fr_1823 = flightMap["FR-1823"];
-
-        var gateChange1 = new Disruption
+        var gateChange = new Disruption
         {
             OrganizationId = organizationId,
             AirportId = airportId,
-            FlightId = fr_1823.Id,
+            FlightId = flightMap["FR-1823"].Id,
             Type = DisruptionType.GateChange,
             DetailsJson = """{"original_gate":"B1","new_gate":"B3","reason":"Unscheduled jet bridge maintenance on B1"}""",
             ReportedBy = "Maintenance Ops",
             ReportedAt = now.AddMinutes(-15),
             Status = DisruptionStatus.Active,
         };
-        context.Disruptions.Add(gateChange1);
+        context.Disruptions.Add(gateChange);
         await context.SaveChangesAsync();
 
-        // Cascade: gate conflict — B3 now has FR-1831 arriving at 15:30 and FR-1823 at 12:00
-        var cascade2 = new CascadeImpact
+        context.CascadeImpacts.Add(new CascadeImpact
         {
             OrganizationId = organizationId,
-            DisruptionId = gateChange1.Id,
+            DisruptionId = gateChange.Id,
             AffectedFlightId = flightMap["FR-1824"].Id,
             ImpactType = CascadeImpactType.GateConflict,
             Severity = Severity.Warning,
             Details = """{"conflict_gate":"B3","conflicting_flight":"FR-1831","overlap_window":"12:00-12:35 vs 15:30","resolution":"Tight but manageable if FR-1823/1824 departs on time"}""",
-        };
-        context.CascadeImpacts.Add(cascade2);
+        });
 
-        var actionPlan2 = new ActionPlan
+        context.ActionPlans.Add(new ActionPlan
         {
             OrganizationId = organizationId,
-            DisruptionId = gateChange1.Id,
+            DisruptionId = gateChange.Id,
             LlmOutputText = "Gate B1 is offline for jet bridge maintenance. FR-1823 rerouted to B3. The turnaround pair FR-1823/1824 must depart by 12:35 to avoid conflict with FR-1831 at 15:30. Crew Gamma is already assigned — no crew change needed.",
             ActionsJson = """[{"action":"reassign_gate","flight":"FR-1823","from_gate":"B1","to_gate":"B3"},{"action":"reassign_gate","flight":"FR-1824","from_gate":"B1","to_gate":"B3"},{"action":"monitor","flight":"FR-1824","condition":"must_depart_by_12:35"}]""",
             GeneratedAt = now.AddMinutes(-13),
-        };
-        context.ActionPlans.Add(actionPlan2);
+        });
         await context.SaveChangesAsync();
 
-        // Disruption 3: RO-361 — 20 min delay, moderate impact
+        // Disruption 2: RO-361 — 20 min delay (resolved)
         var ro_361 = flightMap["RO-361"];
         ro_361.Status = FlightStatus.Delayed;
         ro_361.EstimatedTime = ro_361.ScheduledTime.AddMinutes(20);
 
-        var delay2 = new Disruption
+        var delay = new Disruption
         {
             OrganizationId = organizationId,
             AirportId = airportId,
@@ -500,51 +558,46 @@ public static class ApplicationDbContextSeed
             ReportedAt = now.AddMinutes(-60),
             Status = DisruptionStatus.Resolved,
         };
-        context.Disruptions.Add(delay2);
+        context.Disruptions.Add(delay);
         await context.SaveChangesAsync();
 
-        // Cascade: turnaround breach on RO-362 (40 min gap becomes 20 min)
         var ro_362 = flightMap["RO-362"];
         ro_362.Status = FlightStatus.Delayed;
         ro_362.EstimatedTime = ro_362.ScheduledTime.AddMinutes(15);
 
-        var cascade3 = new CascadeImpact
+        context.CascadeImpacts.Add(new CascadeImpact
         {
             OrganizationId = organizationId,
-            DisruptionId = delay2.Id,
+            DisruptionId = delay.Id,
             AffectedFlightId = ro_362.Id,
             ImpactType = CascadeImpactType.TurnaroundBreach,
             Severity = Severity.Warning,
             Details = """{"turnaround_available_minutes":20,"minimum_required_minutes":35,"status":"resolved_with_delay"}""",
-        };
-        context.CascadeImpacts.Add(cascade3);
+        });
 
-        // Downstream delay on RO-371 (same gate A1)
-        var cascade4 = new CascadeImpact
+        context.CascadeImpacts.Add(new CascadeImpact
         {
             OrganizationId = organizationId,
-            DisruptionId = delay2.Id,
+            DisruptionId = delay.Id,
             AffectedFlightId = flightMap["RO-371"].Id,
             ImpactType = CascadeImpactType.DownstreamDelay,
             Severity = Severity.Info,
             Details = """{"reason":"Gate A1 occupied 15 min longer than scheduled","impact_minutes":15,"status":"absorbed_by_buffer"}""",
-        };
-        context.CascadeImpacts.Add(cascade4);
+        });
 
-        var actionPlan3 = new ActionPlan
+        context.ActionPlans.Add(new ActionPlan
         {
             OrganizationId = organizationId,
-            DisruptionId = delay2.Id,
+            DisruptionId = delay.Id,
             LlmOutputText = "RO-361 delayed 20 minutes due to late inbound from Bucharest. Turnaround with RO-362 is now below minimum. Recommended delaying RO-362 by 15 minutes and expediting ground handling. RO-371 at gate A1 has sufficient buffer to absorb the knock-on delay.",
             ActionsJson = """[{"action":"delay_departure","flight":"RO-362","new_time":"08:55"},{"action":"expedite_handling","flight":"RO-361"},{"action":"monitor","flight":"RO-371","condition":"gate_availability"}]""",
             GeneratedAt = now.AddMinutes(-58),
-        };
-        context.ActionPlans.Add(actionPlan3);
+        });
 
         await context.SaveChangesAsync();
     }
 
-    private static async Task SeedRulesForOrganizationAsync(
+    private static async Task SeedRulesAsync(
         ApplicationDbContext context,
         Guid organizationId,
         Guid airportId)

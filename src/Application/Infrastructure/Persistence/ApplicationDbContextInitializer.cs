@@ -1,4 +1,7 @@
-﻿using Microsoft.AspNetCore.Builder;
+using Application.Domain.Entities;
+
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -25,11 +28,16 @@ public class ApplicationDbContextInitialiser
 {
     private readonly ILogger<ApplicationDbContextInitialiser> _logger;
     private readonly ApplicationDbContext _context;
+    private readonly UserManager<ApplicationUser> _userManager;
 
-    public ApplicationDbContextInitialiser(ILogger<ApplicationDbContextInitialiser> logger, ApplicationDbContext context)
+    public ApplicationDbContextInitialiser(
+        ILogger<ApplicationDbContextInitialiser> logger,
+        ApplicationDbContext context,
+        UserManager<ApplicationUser> userManager)
     {
         _logger = logger;
         _context = context;
+        _userManager = userManager;
     }
 
     public async Task InitialiseAsync()
@@ -49,7 +57,7 @@ public class ApplicationDbContextInitialiser
     {
         try
         {
-            await ApplicationDbContextSeed.SeedSampleDataAsync(_context);
+            await ApplicationDbContextSeed.SeedSampleDataAsync(_context, _userManager);
         }
         catch (Exception ex)
         {
