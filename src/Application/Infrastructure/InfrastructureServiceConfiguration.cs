@@ -94,6 +94,8 @@ public static class InfrastructureServiceConfiguration
         services.AddScoped<ISubscriptionService, SubscriptionService>();
         services.AddScoped<IStripeWebhookHandler, StripeWebhookHandler>();
 
+        services.AddScoped<ICascadeEngine, CascadeEngine>();
+
         var flightDataProvider = configuration.GetValue<string>("FlightDataProvider") ?? "Local";
         if (flightDataProvider == "Local")
         {
