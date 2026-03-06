@@ -17,10 +17,10 @@ public class FlightConfiguration : IEntityTypeConfiguration<Flight>
             .HasMaxLength(100);
 
         builder.Property(f => f.Origin)
-            .HasMaxLength(10);
+            .HasMaxLength(100);
 
         builder.Property(f => f.Destination)
-            .HasMaxLength(10);
+            .HasMaxLength(100);
 
         builder.HasOne(f => f.Airport)
             .WithMany(a => a.Flights)

@@ -159,6 +159,9 @@ public static class ApplicationDbContextSeed
         // Seed flights
         await SeedFlightsForOrganizationAsync(context, organizationId, airport.Id, gates, crews);
 
+        // Seed disruptions and cascade impacts
+        await SeedDisruptionsForOrganizationAsync(context, organizationId, airport.Id);
+
         // Seed operational rules
         await SeedRulesForOrganizationAsync(context, organizationId, airport.Id);
     }
@@ -412,6 +415,131 @@ public static class ApplicationDbContextSeed
         // Update crew status to Assigned for crews with flights
         var alphaCrewEntity = crews.First(c => c.Name == "Alpha");
         alphaCrewEntity.Status = CrewStatus.Assigned;
+
+        await context.SaveChangesAsync();
+    }
+
+    private static async Task SeedDisruptionsForOrganizationAsync(
+        ApplicationDbContext context,
+        Guid organizationId,
+        Guid airportId)
+    {
+        var hasDisruptions = await context.Disruptions
+            .IgnoreQueryFilters()
+            .AnyAsync(d => d.OrganizationId == organizationId);
+
+        if (hasDisruptions)
+            return;
+
+        var flights = await context.Flights
+            .IgnoreQueryFilters()
+            .Where(f => f.OrganizationId == organizationId)
+            .ToListAsync();
+
+        var flightMap = flights.ToDictionary(f => f.FlightNumber, f => f);
+        var now = DateTime.UtcNow;
+
+        // NOTE: W6-2901 / W6-2902 are intentionally NOT pre-disrupted.
+        // They are the primary live demo pair: user reports a 55-min delay on W6-2901
+        // to demonstrate cascade analysis (gate conflict, turnaround breach, crew gap)
+        // and LLM action plan generation in real-time via SignalR.
+
+        // Disruption 1: FR-1823 gate change due to maintenance on B1
+        var fr_1823 = flightMap["FR-1823"];
+
+        var gateChange1 = new Disruption
+        {
+            OrganizationId = organizationId,
+            AirportId = airportId,
+            FlightId = fr_1823.Id,
+            Type = DisruptionType.GateChange,
+            DetailsJson = """{"original_gate":"B1","new_gate":"B3","reason":"Unscheduled jet bridge maintenance on B1"}""",
+            ReportedBy = "Maintenance Ops",
+            ReportedAt = now.AddMinutes(-15),
+            Status = DisruptionStatus.Active,
+        };
+        context.Disruptions.Add(gateChange1);
+        await context.SaveChangesAsync();
+
+        // Cascade: gate conflict — B3 now has FR-1831 arriving at 15:30 and FR-1823 at 12:00
+        var cascade2 = new CascadeImpact
+        {
+            OrganizationId = organizationId,
+            DisruptionId = gateChange1.Id,
+            AffectedFlightId = flightMap["FR-1824"].Id,
+            ImpactType = CascadeImpactType.GateConflict,
+            Severity = Severity.Warning,
+            Details = """{"conflict_gate":"B3","conflicting_flight":"FR-1831","overlap_window":"12:00-12:35 vs 15:30","resolution":"Tight but manageable if FR-1823/1824 departs on time"}""",
+        };
+        context.CascadeImpacts.Add(cascade2);
+
+        var actionPlan2 = new ActionPlan
+        {
+            OrganizationId = organizationId,
+            DisruptionId = gateChange1.Id,
+            LlmOutputText = "Gate B1 is offline for jet bridge maintenance. FR-1823 rerouted to B3. The turnaround pair FR-1823/1824 must depart by 12:35 to avoid conflict with FR-1831 at 15:30. Crew Gamma is already assigned — no crew change needed.",
+            ActionsJson = """[{"action":"reassign_gate","flight":"FR-1823","from_gate":"B1","to_gate":"B3"},{"action":"reassign_gate","flight":"FR-1824","from_gate":"B1","to_gate":"B3"},{"action":"monitor","flight":"FR-1824","condition":"must_depart_by_12:35"}]""",
+            GeneratedAt = now.AddMinutes(-13),
+        };
+        context.ActionPlans.Add(actionPlan2);
+        await context.SaveChangesAsync();
+
+        // Disruption 3: RO-361 — 20 min delay, moderate impact
+        var ro_361 = flightMap["RO-361"];
+        ro_361.Status = FlightStatus.Delayed;
+        ro_361.EstimatedTime = ro_361.ScheduledTime.AddMinutes(20);
+
+        var delay2 = new Disruption
+        {
+            OrganizationId = organizationId,
+            AirportId = airportId,
+            FlightId = ro_361.Id,
+            Type = DisruptionType.Delay,
+            DetailsJson = """{"delayMinutes":20,"reason":"Late inbound aircraft from Bucharest","originalEta":"08:00","newEta":"08:20"}""",
+            ReportedBy = "Airline Ops (TAROM)",
+            ReportedAt = now.AddMinutes(-60),
+            Status = DisruptionStatus.Resolved,
+        };
+        context.Disruptions.Add(delay2);
+        await context.SaveChangesAsync();
+
+        // Cascade: turnaround breach on RO-362 (40 min gap becomes 20 min)
+        var ro_362 = flightMap["RO-362"];
+        ro_362.Status = FlightStatus.Delayed;
+        ro_362.EstimatedTime = ro_362.ScheduledTime.AddMinutes(15);
+
+        var cascade3 = new CascadeImpact
+        {
+            OrganizationId = organizationId,
+            DisruptionId = delay2.Id,
+            AffectedFlightId = ro_362.Id,
+            ImpactType = CascadeImpactType.TurnaroundBreach,
+            Severity = Severity.Warning,
+            Details = """{"turnaround_available_minutes":20,"minimum_required_minutes":35,"status":"resolved_with_delay"}""",
+        };
+        context.CascadeImpacts.Add(cascade3);
+
+        // Downstream delay on RO-371 (same gate A1)
+        var cascade4 = new CascadeImpact
+        {
+            OrganizationId = organizationId,
+            DisruptionId = delay2.Id,
+            AffectedFlightId = flightMap["RO-371"].Id,
+            ImpactType = CascadeImpactType.DownstreamDelay,
+            Severity = Severity.Info,
+            Details = """{"reason":"Gate A1 occupied 15 min longer than scheduled","impact_minutes":15,"status":"absorbed_by_buffer"}""",
+        };
+        context.CascadeImpacts.Add(cascade4);
+
+        var actionPlan3 = new ActionPlan
+        {
+            OrganizationId = organizationId,
+            DisruptionId = delay2.Id,
+            LlmOutputText = "RO-361 delayed 20 minutes due to late inbound from Bucharest. Turnaround with RO-362 is now below minimum. Recommended delaying RO-362 by 15 minutes and expediting ground handling. RO-371 at gate A1 has sufficient buffer to absorb the knock-on delay.",
+            ActionsJson = """[{"action":"delay_departure","flight":"RO-362","new_time":"08:55"},{"action":"expedite_handling","flight":"RO-361"},{"action":"monitor","flight":"RO-371","condition":"gate_availability"}]""",
+            GeneratedAt = now.AddMinutes(-58),
+        };
+        context.ActionPlans.Add(actionPlan3);
 
         await context.SaveChangesAsync();
     }
