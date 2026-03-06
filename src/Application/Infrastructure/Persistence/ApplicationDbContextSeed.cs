@@ -158,6 +158,9 @@ public static class ApplicationDbContextSeed
 
         // Seed flights
         await SeedFlightsForOrganizationAsync(context, organizationId, airport.Id, gates, crews);
+
+        // Seed operational rules
+        await SeedRulesForOrganizationAsync(context, organizationId, airport.Id);
     }
 
     private static async Task SeedFlightsForOrganizationAsync(
@@ -410,6 +413,123 @@ public static class ApplicationDbContextSeed
         var alphaCrewEntity = crews.First(c => c.Name == "Alpha");
         alphaCrewEntity.Status = CrewStatus.Assigned;
 
+        await context.SaveChangesAsync();
+    }
+
+    private static async Task SeedRulesForOrganizationAsync(
+        ApplicationDbContext context,
+        Guid organizationId,
+        Guid airportId)
+    {
+        var hasRules = await context.OperationalRules
+            .IgnoreQueryFilters()
+            .AnyAsync(r => r.OrganizationId == organizationId);
+
+        if (hasRules)
+            return;
+
+        var rules = new List<OperationalRule>
+        {
+            new()
+            {
+                OrganizationId = organizationId,
+                AirportId = airportId,
+                Name = "Critical turnaround breach",
+                Description = "Flag critical when turnaround time drops below 35 minutes for international flights and recommend gate reassignment.",
+                IsActive = true,
+                RuleJson = """
+                {
+                    "conditions": [
+                        { "field": "turnaround_minutes", "operator": "less_than", "value": 35 },
+                        { "field": "flight_type", "operator": "equals", "value": "International" }
+                    ],
+                    "actions": [
+                        { "type": "flag_severity", "value": "Critical" },
+                        { "type": "recommend", "value": "gate_reassignment" }
+                    ]
+                }
+                """,
+            },
+            new()
+            {
+                OrganizationId = organizationId,
+                AirportId = airportId,
+                Name = "Long delay alert",
+                Description = "Flag critical and notify duty manager when a flight delay exceeds 60 minutes.",
+                IsActive = true,
+                RuleJson = """
+                {
+                    "conditions": [
+                        { "field": "delay_minutes", "operator": "greater_than", "value": 60 }
+                    ],
+                    "actions": [
+                        { "type": "flag_severity", "value": "Critical" },
+                        { "type": "auto_notify", "value": "duty_manager" }
+                    ]
+                }
+                """,
+            },
+            new()
+            {
+                OrganizationId = organizationId,
+                AirportId = airportId,
+                Name = "Gate conflict warning",
+                Description = "Flag warning when a delayed flight occupies an international gate, potentially blocking other operations.",
+                IsActive = true,
+                RuleJson = """
+                {
+                    "conditions": [
+                        { "field": "flight_status", "operator": "equals", "value": "Delayed" },
+                        { "field": "gate_type", "operator": "equals", "value": "International" }
+                    ],
+                    "actions": [
+                        { "type": "flag_severity", "value": "Warning" }
+                    ]
+                }
+                """,
+            },
+            new()
+            {
+                OrganizationId = organizationId,
+                AirportId = airportId,
+                Name = "Crew overtime risk",
+                Description = "Flag warning and recommend crew reallocation when assigned crew has less than 30 minutes until departure.",
+                IsActive = true,
+                RuleJson = """
+                {
+                    "conditions": [
+                        { "field": "crew_status", "operator": "equals", "value": "Assigned" },
+                        { "field": "time_until_departure", "operator": "less_than", "value": 30 }
+                    ],
+                    "actions": [
+                        { "type": "flag_severity", "value": "Warning" },
+                        { "type": "recommend", "value": "crew_reallocation" }
+                    ]
+                }
+                """,
+            },
+            new()
+            {
+                OrganizationId = organizationId,
+                AirportId = airportId,
+                Name = "Departure buffer warning",
+                Description = "Flag critical when a non-cancelled flight has less than 15 minutes until departure.",
+                IsActive = true,
+                RuleJson = """
+                {
+                    "conditions": [
+                        { "field": "time_until_departure", "operator": "less_than", "value": 15 },
+                        { "field": "flight_status", "operator": "not_equals", "value": "Cancelled" }
+                    ],
+                    "actions": [
+                        { "type": "flag_severity", "value": "Critical" }
+                    ]
+                }
+                """,
+            },
+        };
+
+        context.OperationalRules.AddRange(rules);
         await context.SaveChangesAsync();
     }
 }
