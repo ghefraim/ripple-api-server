@@ -52,6 +52,9 @@ public class CascadeEngine : ICascadeEngine
             impacts.AddRange(turnaroundBreaches);
         }
 
+        var crewGaps = await DetectCrewGapsAsync(flight, disruption, impacts, cancellationToken);
+        impacts.AddRange(crewGaps);
+
         await _context.CascadeImpacts.AddRangeAsync(impacts, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
 
@@ -204,6 +207,170 @@ public class CascadeEngine : ICascadeEngine
                 _logger.LogInformation(
                     "Paired flight {FlightNumber} departure pushed to {EstimatedTime} (deficit: {Deficit}min)",
                     pairedFlight.FlightNumber, pairedFlight.EstimatedTime, (int)deficit);
+            }
+        }
+
+        return impacts;
+    }
+
+    private async Task<List<CascadeImpact>> DetectCrewGapsAsync(
+        Flight flight, Disruption disruption, List<CascadeImpact> existingImpacts, CancellationToken cancellationToken)
+    {
+        var impacts = new List<CascadeImpact>();
+
+        // Collect all affected flight IDs (disrupted flight + any already-impacted flights)
+        var affectedFlightIds = new HashSet<Guid> { flight.Id };
+        foreach (var impact in existingImpacts)
+            affectedFlightIds.Add(impact.AffectedFlightId);
+
+        // Load affected flights with their crews
+        var affectedFlights = await _context.Flights
+            .Include(f => f.Crew)
+            .Where(f => affectedFlightIds.Contains(f.Id) && f.CrewId != null)
+            .ToListAsync(cancellationToken);
+
+        if (affectedFlights.Count == 0)
+            return impacts;
+
+        var crewIds = affectedFlights.Select(f => f.CrewId!.Value).Distinct().ToList();
+
+        // Load all crews at this airport for alternative availability check
+        var allCrews = await _context.GroundCrews
+            .Where(c => c.AirportId == flight.AirportId)
+            .ToListAsync(cancellationToken);
+
+        var today = DateTime.UtcNow.Date;
+        var tomorrow = today.AddDays(1);
+
+        // Load all today's flights for crews involved (to detect time overlaps)
+        var crewFlights = await _context.Flights
+            .Where(f => f.CrewId != null
+                && crewIds.Contains(f.CrewId.Value)
+                && f.Status != FlightStatus.Cancelled
+                && f.ScheduledTime >= today
+                && f.ScheduledTime < tomorrow)
+            .ToListAsync(cancellationToken);
+
+        var processedCrews = new HashSet<Guid>();
+
+        foreach (var af in affectedFlights)
+        {
+            if (af.Crew == null || processedCrews.Contains(af.CrewId!.Value))
+                continue;
+
+            processedCrews.Add(af.CrewId!.Value);
+            var crew = af.Crew;
+            var crewFlightList = crewFlights.Where(f => f.CrewId == crew.Id).ToList();
+
+            // Check 1: Crew shift end before flight's new estimated time
+            var flightTime = af.EstimatedTime ?? af.ScheduledTime;
+            var shiftEndToday = today.Add(crew.ShiftEnd.ToTimeSpan());
+
+            if (shiftEndToday < flightTime)
+            {
+                var gapMinutes = (int)(flightTime - shiftEndToday).TotalMinutes;
+                var alternativesExist = allCrews.Any(c =>
+                    c.Id != crew.Id
+                    && c.Status != CrewStatus.OnBreak
+                    && today.Add(c.ShiftEnd.ToTimeSpan()) >= flightTime
+                    && today.Add(c.ShiftStart.ToTimeSpan()) <= flightTime);
+
+                var severity = alternativesExist ? Severity.Warning : Severity.Critical;
+
+                var details = JsonSerializer.Serialize(new
+                {
+                    crewName = crew.Name,
+                    conflictingFlightNumbers = new[] { af.FlightNumber },
+                    gapDurationMinutes = gapMinutes,
+                    reason = "Crew shift ends before flight estimated time"
+                });
+
+                impacts.Add(new CascadeImpact
+                {
+                    OrganizationId = disruption.OrganizationId,
+                    DisruptionId = disruption.Id,
+                    AffectedFlightId = af.Id,
+                    ImpactType = CascadeImpactType.CrewGap,
+                    Severity = severity,
+                    Details = details
+                });
+
+                _logger.LogWarning(
+                    "Crew gap: {CrewName} shift ends at {ShiftEnd} but flight {Flight} estimated at {EstimatedTime} (gap: {Gap}min, severity: {Severity})",
+                    crew.Name, crew.ShiftEnd, af.FlightNumber, flightTime, gapMinutes, severity);
+            }
+
+            // Check 2: Crew assigned to two flights that now overlap in time
+            for (var i = 0; i < crewFlightList.Count; i++)
+            {
+                for (var j = i + 1; j < crewFlightList.Count; j++)
+                {
+                    var f1 = crewFlightList[i];
+                    var f2 = crewFlightList[j];
+                    var f1Time = f1.EstimatedTime ?? f1.ScheduledTime;
+                    var f2Time = f2.EstimatedTime ?? f2.ScheduledTime;
+
+                    var buffer = TimeSpan.FromMinutes(_gateBufferMinutes);
+                    var f1Start = f1Time - buffer;
+                    var f1End = f1Time + buffer;
+                    var f2Start = f2Time - buffer;
+                    var f2End = f2Time + buffer;
+
+                    if (f1Start < f2End && f1End > f2Start)
+                    {
+                        // Only create impact if at least one of the flights is affected by this disruption
+                        if (!affectedFlightIds.Contains(f1.Id) && !affectedFlightIds.Contains(f2.Id))
+                            continue;
+
+                        // Avoid duplicate impacts for the same pair
+                        var pairKey = f1.Id.CompareTo(f2.Id) < 0 ? (f1.Id, f2.Id) : (f2.Id, f1.Id);
+                        var alreadyReported = impacts.Any(imp =>
+                            imp.ImpactType == CascadeImpactType.CrewGap
+                            && imp.Details.Contains(f1.FlightNumber)
+                            && imp.Details.Contains(f2.FlightNumber));
+
+                        if (alreadyReported)
+                            continue;
+
+                        var overlapMinutes = (int)(
+                            (f1End < f2End ? f1End : f2End) -
+                            (f1Start > f2Start ? f1Start : f2Start)
+                        ).TotalMinutes;
+
+                        var alternativesExist = allCrews.Any(c =>
+                            c.Id != crew.Id
+                            && c.Status != CrewStatus.OnBreak
+                            && today.Add(c.ShiftEnd.ToTimeSpan()) >= f2Time
+                            && today.Add(c.ShiftStart.ToTimeSpan()) <= f1Time);
+
+                        var severity = alternativesExist ? Severity.Warning : Severity.Critical;
+
+                        var details = JsonSerializer.Serialize(new
+                        {
+                            crewName = crew.Name,
+                            conflictingFlightNumbers = new[] { f1.FlightNumber, f2.FlightNumber },
+                            gapDurationMinutes = overlapMinutes,
+                            reason = "Crew assigned to overlapping flights"
+                        });
+
+                        // Impact on the later flight (the one that needs reassignment)
+                        var impactedFlightId = f1Time > f2Time ? f1.Id : f2.Id;
+
+                        impacts.Add(new CascadeImpact
+                        {
+                            OrganizationId = disruption.OrganizationId,
+                            DisruptionId = disruption.Id,
+                            AffectedFlightId = impactedFlightId,
+                            ImpactType = CascadeImpactType.CrewGap,
+                            Severity = severity,
+                            Details = details
+                        });
+
+                        _logger.LogWarning(
+                            "Crew overlap: {CrewName} assigned to {Flight1} and {Flight2} which now overlap (severity: {Severity})",
+                            crew.Name, f1.FlightNumber, f2.FlightNumber, severity);
+                    }
+                }
             }
         }
 
