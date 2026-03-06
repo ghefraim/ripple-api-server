@@ -16,6 +16,8 @@ public class CascadeEngine : ICascadeEngine
     private readonly ApplicationDbContext _context;
     private readonly ILogger<CascadeEngine> _logger;
     private readonly int _gateBufferMinutes;
+    private readonly int _turnaroundWarningMinutes;
+    private readonly int _turnaroundCriticalMinutes;
 
     public CascadeEngine(
         ApplicationDbContext context,
@@ -25,6 +27,8 @@ public class CascadeEngine : ICascadeEngine
         _context = context;
         _logger = logger;
         _gateBufferMinutes = configuration.GetValue("CascadeEngine:GateBufferMinutes", 30);
+        _turnaroundWarningMinutes = configuration.GetValue("CascadeEngine:TurnaroundWarningMinutes", 35);
+        _turnaroundCriticalMinutes = configuration.GetValue("CascadeEngine:TurnaroundCriticalMinutes", 20);
     }
 
     public async Task<CascadeResult> ProcessDisruptionAsync(Disruption disruption, CancellationToken cancellationToken = default)
@@ -41,6 +45,12 @@ public class CascadeEngine : ICascadeEngine
 
         var gateConflicts = await DetectGateConflictsAsync(flight, disruption, cancellationToken);
         impacts.AddRange(gateConflicts);
+
+        if (disruption.Type == DisruptionType.Delay)
+        {
+            var turnaroundBreaches = await DetectTurnaroundBreachAsync(flight, disruption, cancellationToken);
+            impacts.AddRange(turnaroundBreaches);
+        }
 
         await _context.CascadeImpacts.AddRangeAsync(impacts, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
@@ -132,6 +142,68 @@ public class CascadeEngine : ICascadeEngine
 
                 _logger.LogWarning("Gate conflict detected: {Flight1} and {Flight2} at gate {Gate}",
                     flight.FlightNumber, other.FlightNumber, flight.Gate?.Code);
+            }
+        }
+
+        return impacts;
+    }
+
+    private async Task<List<CascadeImpact>> DetectTurnaroundBreachAsync(
+        Flight flight, Disruption disruption, CancellationToken cancellationToken)
+    {
+        var impacts = new List<CascadeImpact>();
+
+        if (flight.TurnaroundPairId == null)
+            return impacts;
+
+        var pairedFlight = await _context.Flights
+            .Include(f => f.Gate)
+            .FirstOrDefaultAsync(f => f.Id == flight.TurnaroundPairId, cancellationToken);
+
+        if (pairedFlight == null || pairedFlight.Status == FlightStatus.Cancelled)
+            return impacts;
+
+        // Turnaround = paired departure ScheduledTime minus disrupted arrival EstimatedTime
+        var arrivalTime = flight.EstimatedTime ?? flight.ScheduledTime;
+        var departureTime = pairedFlight.ScheduledTime;
+        var originalTurnaround = (departureTime - flight.ScheduledTime).TotalMinutes;
+        var newTurnaround = (departureTime - arrivalTime).TotalMinutes;
+
+        if (newTurnaround < _turnaroundWarningMinutes)
+        {
+            var severity = newTurnaround < _turnaroundCriticalMinutes ? Severity.Critical : Severity.Warning;
+
+            var details = JsonSerializer.Serialize(new
+            {
+                originalTurnaroundMinutes = (int)originalTurnaround,
+                newTurnaroundMinutes = (int)newTurnaround,
+                pairedFlightNumber = pairedFlight.FlightNumber,
+                disruptedFlightNumber = flight.FlightNumber,
+                gateCode = pairedFlight.Gate?.Code
+            });
+
+            impacts.Add(new CascadeImpact
+            {
+                OrganizationId = disruption.OrganizationId,
+                DisruptionId = disruption.Id,
+                AffectedFlightId = pairedFlight.Id,
+                ImpactType = CascadeImpactType.TurnaroundBreach,
+                Severity = severity,
+                Details = details
+            });
+
+            _logger.LogWarning(
+                "Turnaround breach: {DisruptedFlight} -> {PairedFlight}, turnaround reduced from {Original}min to {New}min (severity: {Severity})",
+                flight.FlightNumber, pairedFlight.FlightNumber, (int)originalTurnaround, (int)newTurnaround, severity);
+
+            // Push paired departure forward by the deficit (one level only)
+            var deficit = _turnaroundWarningMinutes - newTurnaround;
+            if (deficit > 0)
+            {
+                pairedFlight.EstimatedTime = departureTime.AddMinutes(deficit);
+                _logger.LogInformation(
+                    "Paired flight {FlightNumber} departure pushed to {EstimatedTime} (deficit: {Deficit}min)",
+                    pairedFlight.FlightNumber, pairedFlight.EstimatedTime, (int)deficit);
             }
         }
 
