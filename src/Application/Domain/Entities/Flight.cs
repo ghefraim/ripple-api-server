@@ -7,6 +7,8 @@ public class Flight : AuditableEntity, IOrganizationScoped
 {
     public Guid OrganizationId { get; set; }
 
+    public Guid AirportId { get; set; }
+
     public string FlightNumber { get; set; } = string.Empty;
 
     public string? Airline { get; set; }
@@ -31,6 +33,7 @@ public class Flight : AuditableEntity, IOrganizationScoped
     public Guid? CrewId { get; set; }
     public Guid? TurnaroundPairId { get; set; }
 
+    public AirportConfig? Airport { get; set; }
     public Gate? Gate { get; set; }
     public GroundCrew? Crew { get; set; }
     public Flight? TurnaroundPair { get; set; }

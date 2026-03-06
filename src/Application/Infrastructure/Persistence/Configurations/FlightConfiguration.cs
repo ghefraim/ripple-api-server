@@ -22,6 +22,11 @@ public class FlightConfiguration : IEntityTypeConfiguration<Flight>
         builder.Property(f => f.Destination)
             .HasMaxLength(10);
 
+        builder.HasOne(f => f.Airport)
+            .WithMany(a => a.Flights)
+            .HasForeignKey(f => f.AirportId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasOne(f => f.Gate)
             .WithMany(g => g.Flights)
             .HasForeignKey(f => f.GateId)

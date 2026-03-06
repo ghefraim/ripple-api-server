@@ -13,6 +13,11 @@ public class GateConfiguration : IEntityTypeConfiguration<Gate>
             .HasMaxLength(20)
             .IsRequired();
 
+        builder.HasOne(g => g.Airport)
+            .WithMany(a => a.Gates)
+            .HasForeignKey(g => g.AirportId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasIndex(g => new { g.OrganizationId, g.Code })
             .IsUnique();
     }

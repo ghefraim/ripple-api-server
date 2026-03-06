@@ -13,6 +13,10 @@ public class AirportConfigConfiguration : IEntityTypeConfiguration<AirportConfig
             .HasMaxLength(10)
             .IsRequired();
 
+        builder.Property(a => a.Name)
+            .HasMaxLength(200)
+            .IsRequired();
+
         builder.Property(a => a.Timezone)
             .HasMaxLength(50)
             .IsRequired();

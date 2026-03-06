@@ -12,5 +12,10 @@ public class GroundCrewConfiguration : IEntityTypeConfiguration<GroundCrew>
         builder.Property(c => c.Name)
             .HasMaxLength(100)
             .IsRequired();
+
+        builder.HasOne(c => c.Airport)
+            .WithMany(a => a.GroundCrews)
+            .HasForeignKey(c => c.AirportId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

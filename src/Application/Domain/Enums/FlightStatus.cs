@@ -8,4 +8,5 @@ public enum FlightStatus
     OnTime = 1,
     Delayed = 2,
     Cancelled = 3,
+    Diverted = 4,
 }
