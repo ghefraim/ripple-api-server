@@ -58,7 +58,9 @@ public class CascadeEngine : ICascadeEngine
         await _context.CascadeImpacts.AddRangeAsync(impacts, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
 
-        var context = await BuildCascadeContextAsync(flight, disruption, impacts, cancellationToken);
+        var ruleRecommendations = await ExecuteRulesAsync(flight, disruption, impacts, cancellationToken);
+
+        var context = await BuildCascadeContextAsync(flight, disruption, impacts, ruleRecommendations, cancellationToken);
 
         return new CascadeResult(impacts, context);
     }
@@ -378,7 +380,7 @@ public class CascadeEngine : ICascadeEngine
     }
 
     private async Task<CascadeContext> BuildCascadeContextAsync(
-        Flight flight, Disruption disruption, List<CascadeImpact> impacts, CancellationToken cancellationToken)
+        Flight flight, Disruption disruption, List<CascadeImpact> impacts, List<string> ruleRecommendations, CancellationToken cancellationToken)
     {
         var today = DateTime.UtcNow.Date;
         var tomorrow = today.AddDays(1);
@@ -431,8 +433,227 @@ public class CascadeEngine : ICascadeEngine
             contextImpacts,
             contextGates,
             contextCrews,
-            new List<string>());
+            ruleRecommendations);
     }
+
+    private async Task<List<string>> ExecuteRulesAsync(
+        Flight flight, Disruption disruption, List<CascadeImpact> impacts, CancellationToken cancellationToken)
+    {
+        var recommendations = new List<string>();
+
+        var rules = await _context.OperationalRules
+            .Where(r => r.AirportId == flight.AirportId && r.IsActive)
+            .ToListAsync(cancellationToken);
+
+        if (rules.Count == 0)
+            return recommendations;
+
+        var ruleContext = BuildRuleEvaluationContext(flight, disruption, impacts);
+
+        foreach (var rule in rules)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(rule.RuleJson);
+                var root = doc.RootElement;
+
+                if (!root.TryGetProperty("conditions", out var conditions) ||
+                    !root.TryGetProperty("actions", out var actions))
+                    continue;
+
+                var allConditionsMet = true;
+                foreach (var condition in conditions.EnumerateArray())
+                {
+                    var field = condition.GetProperty("field").GetString()!;
+                    var op = condition.GetProperty("operator").GetString()!;
+                    var value = condition.GetProperty("value");
+
+                    if (!EvaluateCondition(field, op, value, ruleContext))
+                    {
+                        allConditionsMet = false;
+                        break;
+                    }
+                }
+
+                if (!allConditionsMet)
+                    continue;
+
+                _logger.LogInformation("Rule '{RuleName}' triggered for flight {FlightNumber}",
+                    rule.Name, flight.FlightNumber);
+
+                foreach (var action in actions.EnumerateArray())
+                {
+                    var actionType = action.GetProperty("type").GetString()!;
+                    var actionValue = action.GetProperty("value").GetString()!;
+
+                    ExecuteRuleAction(actionType, actionValue, rule.Name, impacts, recommendations);
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse RuleJson for rule '{RuleName}' (ID: {RuleId})",
+                    rule.Name, rule.Id);
+            }
+        }
+
+        return recommendations;
+    }
+
+    private RuleEvaluationContext BuildRuleEvaluationContext(
+        Flight flight, Disruption disruption, List<CascadeImpact> impacts)
+    {
+        var delayMinutes = disruption.Type == DisruptionType.Delay
+            ? GetDelayMinutes(disruption.DetailsJson) : 0;
+
+        var turnaroundMinutes = impacts
+            .Where(i => i.ImpactType == CascadeImpactType.TurnaroundBreach)
+            .Select(i =>
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(i.Details);
+                    return doc.RootElement.GetProperty("newTurnaroundMinutes").GetInt32();
+                }
+                catch { return (int?)null; }
+            })
+            .FirstOrDefault(v => v.HasValue);
+
+        var flightTime = flight.EstimatedTime ?? flight.ScheduledTime;
+        var timeUntilDeparture = flight.Direction == FlightDirection.Departure
+            ? (int)(flightTime - DateTime.UtcNow).TotalMinutes
+            : impacts
+                .Where(i => i.ImpactType == CascadeImpactType.TurnaroundBreach)
+                .Select(_ =>
+                {
+                    // For arrivals with turnaround pair, use the paired departure's time
+                    if (flight.TurnaroundPairId.HasValue)
+                    {
+                        var paired = _context.Flights.Find(flight.TurnaroundPairId.Value);
+                        if (paired != null)
+                        {
+                            var pairedTime = paired.EstimatedTime ?? paired.ScheduledTime;
+                            return (int)(pairedTime - DateTime.UtcNow).TotalMinutes;
+                        }
+                    }
+                    return (int?)null;
+                })
+                .FirstOrDefault(v => v.HasValue) ?? (int)(flightTime - DateTime.UtcNow).TotalMinutes;
+
+        return new RuleEvaluationContext(
+            DelayMinutes: delayMinutes,
+            TurnaroundMinutes: turnaroundMinutes,
+            FlightType: flight.FlightType.ToString(),
+            GateType: flight.Gate?.GateType.ToString(),
+            CrewStatus: flight.Crew?.Status.ToString(),
+            FlightStatus: flight.Status.ToString(),
+            TimeUntilDeparture: timeUntilDeparture
+        );
+    }
+
+    private static bool EvaluateCondition(string field, string op, JsonElement value, RuleEvaluationContext ctx)
+    {
+        var fieldValue = field switch
+        {
+            "delay_minutes" => (object?)ctx.DelayMinutes,
+            "turnaround_minutes" => ctx.TurnaroundMinutes,
+            "flight_type" => ctx.FlightType,
+            "gate_type" => ctx.GateType,
+            "crew_status" => ctx.CrewStatus,
+            "flight_status" => ctx.FlightStatus,
+            "time_until_departure" => ctx.TimeUntilDeparture,
+            _ => null
+        };
+
+        if (fieldValue == null)
+            return false;
+
+        return op switch
+        {
+            "equals" => CompareEquals(fieldValue, value),
+            "not_equals" => !CompareEquals(fieldValue, value),
+            "less_than" => CompareNumeric(fieldValue, value) < 0,
+            "greater_than" => CompareNumeric(fieldValue, value) > 0,
+            "in" => CompareIn(fieldValue, value),
+            "not_in" => !CompareIn(fieldValue, value),
+            _ => false
+        };
+    }
+
+    private static bool CompareEquals(object fieldValue, JsonElement value)
+    {
+        if (fieldValue is int intVal && value.ValueKind == JsonValueKind.Number)
+            return intVal == value.GetInt32();
+        if (fieldValue is string strVal && value.ValueKind == JsonValueKind.String)
+            return string.Equals(strVal, value.GetString(), StringComparison.OrdinalIgnoreCase);
+        return string.Equals(fieldValue.ToString(), value.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int CompareNumeric(object fieldValue, JsonElement value)
+    {
+        var left = fieldValue is int i ? i : int.TryParse(fieldValue.ToString(), out var parsed) ? parsed : 0;
+        var right = value.ValueKind == JsonValueKind.Number ? value.GetInt32() : 0;
+        return left.CompareTo(right);
+    }
+
+    private static bool CompareIn(object fieldValue, JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+            return false;
+
+        var strVal = fieldValue.ToString()!;
+        foreach (var item in value.EnumerateArray())
+        {
+            if (string.Equals(strVal, item.ToString(), StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private void ExecuteRuleAction(string actionType, string actionValue, string ruleName,
+        List<CascadeImpact> impacts, List<string> recommendations)
+    {
+        switch (actionType)
+        {
+            case "flag_severity":
+                if (Enum.TryParse<Severity>(actionValue, true, out var severity))
+                {
+                    foreach (var impact in impacts)
+                    {
+                        if (severity > impact.Severity)
+                        {
+                            _logger.LogInformation("Rule '{Rule}' escalated impact {ImpactType} severity from {Old} to {New}",
+                                ruleName, impact.ImpactType, impact.Severity, severity);
+                            impact.Severity = severity;
+                        }
+                    }
+                }
+                break;
+
+            case "recommend":
+                recommendations.Add($"[Rule: {ruleName}] {actionValue}");
+                _logger.LogInformation("Rule '{Rule}' added recommendation: {Recommendation}", ruleName, actionValue);
+                break;
+
+            case "auto_notify":
+                recommendations.Add($"[Rule: {ruleName}] AUTO_NOTIFY: {actionValue}");
+                _logger.LogInformation("Rule '{Rule}' queued notification for: {Target}", ruleName, actionValue);
+                break;
+
+            default:
+                _logger.LogWarning("Unknown rule action type: {ActionType} in rule '{Rule}'", actionType, ruleName);
+                break;
+        }
+    }
+
+    private record RuleEvaluationContext(
+        int DelayMinutes,
+        int? TurnaroundMinutes,
+        string FlightType,
+        string? GateType,
+        string? CrewStatus,
+        string FlightStatus,
+        int TimeUntilDeparture
+    );
 
     private static int GetDelayMinutes(string detailsJson)
     {
