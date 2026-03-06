@@ -17,7 +17,6 @@ public class ApplicationUser : IdentityUser<Guid>, ISoftDeletable
     public string? AvatarUrl { get; set; }
     public DateTime? AvatarUploadedAt { get; set; }
 
-
     [ExcludeFromAudit]
     public DateTime CreatedOn { get; set; }
     [ExcludeFromAudit]

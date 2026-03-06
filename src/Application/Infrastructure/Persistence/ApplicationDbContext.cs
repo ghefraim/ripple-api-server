@@ -49,6 +49,16 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
     public DbSet<BillingCustomer> BillingCustomers => Set<BillingCustomer>();
     public DbSet<StripeEventLog> StripeEventLogs => Set<StripeEventLog>();
 
+    public DbSet<Gate> Gates => Set<Gate>();
+    public DbSet<GroundCrew> GroundCrews => Set<GroundCrew>();
+    public DbSet<Flight> Flights => Set<Flight>();
+    public DbSet<Disruption> Disruptions => Set<Disruption>();
+    public DbSet<CascadeImpact> CascadeImpacts => Set<CascadeImpact>();
+    public DbSet<ActionPlan> ActionPlans => Set<ActionPlan>();
+    public DbSet<OperationalRule> OperationalRules => Set<OperationalRule>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<AirportConfig> AirportConfigs => Set<AirportConfig>();
+
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         return await base.SaveChangesAsync(cancellationToken);
