@@ -9,10 +9,10 @@ public class ActionPlanConfiguration : IEntityTypeConfiguration<ActionPlan>
 {
     public void Configure(EntityTypeBuilder<ActionPlan> builder)
     {
-        builder.Property(a => a.LlmRawOutput)
+        builder.Property(a => a.LlmOutputText)
             .HasColumnType("text");
 
-        builder.Property(a => a.Actions)
+        builder.Property(a => a.ActionsJson)
             .HasColumnType("jsonb")
             .IsRequired();
 

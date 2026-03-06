@@ -8,9 +8,11 @@ public class ActionPlan : AuditableEntity, IOrganizationScoped
 
     public Guid DisruptionId { get; set; }
 
-    public string? LlmRawOutput { get; set; }
+    public string? LlmOutputText { get; set; }
 
-    public string Actions { get; set; } = "[]";
+    public string ActionsJson { get; set; } = "[]";
+
+    public DateTime GeneratedAt { get; set; }
 
     public Disruption Disruption { get; set; } = null!;
     public IList<Notification> Notifications { get; private set; } = new List<Notification>();

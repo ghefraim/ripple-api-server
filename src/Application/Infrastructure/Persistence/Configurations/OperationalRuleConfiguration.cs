@@ -16,9 +16,14 @@ public class OperationalRuleConfiguration : IEntityTypeConfiguration<Operational
         builder.Property(r => r.Description)
             .HasMaxLength(500);
 
-        builder.Property(r => r.RuleDefinition)
+        builder.Property(r => r.RuleJson)
             .HasColumnType("jsonb")
             .IsRequired();
+
+        builder.HasOne(r => r.Airport)
+            .WithMany()
+            .HasForeignKey(r => r.AirportId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(r => r.CreatedByUser)
             .WithMany()
