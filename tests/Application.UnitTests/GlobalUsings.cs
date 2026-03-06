@@ -1,0 +1,13 @@
+global using Xunit;
+global using FluentAssertions;
+global using Moq;
+global using Microsoft.EntityFrameworkCore;
+global using Microsoft.Extensions.Caching.Memory;
+global using Microsoft.Extensions.Configuration;
+global using Microsoft.Extensions.Logging;
+global using Microsoft.Extensions.Options;
+global using Application.Domain.Entities;
+global using Application.Domain.Enums;
+global using Application.Infrastructure.Persistence;
+global using Application.Infrastructure.Services;
+global using Application.Common.Interfaces;

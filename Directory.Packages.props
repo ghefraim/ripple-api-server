@@ -1,0 +1,46 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--ASP.NET-->
+    <PackageVersion Include="Ardalis.GuardClauses" Version="4.6.0" />
+    <PackageVersion Include="AutoMapper" Version="13.0.1" />
+    <PackageVersion Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="12.0.0" />
+    <PackageVersion Include="Azure.Storage.Blobs" Version="12.22.1" />
+    <PackageVersion Include="BCrypt.Net-Next" Version="4.0.3" />
+    <PackageVersion Include="Google.Apis.Auth.AspNetCore3" Version="1.69.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.8" />
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="8.0.3" />
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.UI" Version="8.0.3" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.8" />
+    <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.8" />
+    <PackageVersion Include="Portable.BouncyCastle" Version="1.9.0" />
+    <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.2.3" />
+    <!-- Entity Framework -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="8.0.8" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.8" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="8.0.1" />
+    <!-- Open source packages -->
+    <PackageVersion Include="CsvHelper" Version="15.0.10" />
+    <PackageVersion Include="ErrorOr" Version="2.0.1" />
+    <PackageVersion Include="FluentValidation" Version="11.10.0" />
+    <PackageVersion Include="FluentValidation.AspNetCore" Version="11.3.0" />
+    <PackageVersion Include="MediatR" Version="12.4.1" />
+    <PackageVersion Include="Stripe.net" Version="50.1.0" />
+    <!-- Analyzers -->
+    <PackageVersion Include="StyleCop.Analyzers" Version="1.2.0-beta.556" />
+    <!-- Tests -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.0" />
+    <PackageVersion Include="FluentAssertions" Version="6.12.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageVersion Include="throw" Version="1.4.0" />
+    <PackageVersion Include="Unidecode.NET" Version="2.1.0" />
+    <PackageVersion Include="xunit" Version="2.6.5" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.5.6" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.0" />
+    <PackageVersion Include="Moq" Version="4.16.1" />
+  </ItemGroup>
+</Project>

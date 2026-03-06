@@ -1,0 +1,19 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+This is a .NET 8.0 (ASP.NET) app created using vertical slice architecture. Avoid `/// <summary>` comments as i feel that they clutter my code. Code should document itself. Use comments only where code is complex.
+For the folder structure we have the following:
+/src: containing 2 projects, one Api, and one Application.
+/tests: 2 folders: IntegrationTests and UnitTests.
+
+In the `Api` folder we have the controllers/endpoints delared in the `Controllers` folder. We also have an exception filter in the `Filters` folder.
+In the `Application` folder we have the good stuff:
+- `Common` folder containing the following subfolders: Behaviours, Configuration, Exceptions, Interfaces, Mappings, Models, Security, Utilities and some base classes.
+- `Domain` folder containing the following subfolders: Entities, Enums, Events, ValueObjects
+- `Features` structured like this: each Entity from Domain has its folder. For each folder we have a corresponding controller in the `Api/Endpoitns`. For example, in Features we could have the `TodoItems` folder and in the `Api/Controllers` we'd have `TodoItemsController.cs`.  In each folder we have the Features associated with the name of the folder. For example `Features/TodoItems/GetTodoItemsWithPagination.cs` file. Each feature has its own namespace, though i think we should make a common namespace that can be used for common Dtos. The logic behind this is that when modifying a Dto on a feature, the other features shouldn't be affected. Decoupling at its fines. But decoupling can make a lot of duplicate code. In this case, we can start with a common namespace in which we'd declare common Dtos, then change as needed in each feature.
+- - There are some exceptions to this architecture, which are: AuthController.cs and its AuthService.cs. They're not broken per Feature
+- `Infrastructure` folder containing the following subfolders: Files, Identity, Persistence, Services
+
+When doing migrations, we have to do `dotnet ef migrations add MigrationName -s src/Api -p src/Application`
