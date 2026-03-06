@@ -1,4 +1,7 @@
 ﻿using Application.Domain.Entities;
+using Application.Domain.Enums;
+
+using Microsoft.EntityFrameworkCore;
 
 namespace Application.Infrastructure.Persistence;
 
@@ -8,6 +11,7 @@ public static class ApplicationDbContextSeed
     {
         await SeedPlansAsync(context);
         await SeedTodoListsAsync(context);
+        await SeedAirportDataAsync(context);
     }
 
     private static async Task SeedPlansAsync(ApplicationDbContext context)
@@ -89,24 +93,67 @@ public static class ApplicationDbContextSeed
         // Seed, if necessary
         if (!context.TodoLists.Any())
         {
-            // context.TodoLists.Add(new TodoList
-            // {
-            //     Title = "Shopping",
-            //     Colour = Colour.Blue,
-            //     Items =
-            //         {
-            //             new TodoItem { Title = "Apples", Done = true },
-            //             new TodoItem { Title = "Milk", Done = true },
-            //             new TodoItem { Title = "Bread", Done = true },
-            //             new TodoItem { Title = "Toilet paper" },
-            //             new TodoItem { Title = "Pasta" },
-            //             new TodoItem { Title = "Tissues" },
-            //             new TodoItem { Title = "Tuna" },
-            //             new TodoItem { Title = "Water" },
-            //         },
-            // });
-
             await context.SaveChangesAsync();
         }
+    }
+
+    private static async Task SeedAirportDataAsync(ApplicationDbContext context)
+    {
+        // Seed airport data for each organization that doesn't have an airport config yet
+        var organizations = await context.Organizations
+            .IgnoreQueryFilters()
+            .ToListAsync();
+
+        foreach (var org in organizations)
+        {
+            var hasAirport = await context.AirportConfigs
+                .IgnoreQueryFilters()
+                .AnyAsync(a => a.OrganizationId == org.Id);
+
+            if (hasAirport)
+                continue;
+
+            await SeedAirportForOrganizationAsync(context, org.Id);
+        }
+    }
+
+    private static async Task SeedAirportForOrganizationAsync(ApplicationDbContext context, Guid organizationId)
+    {
+        // Create Cluj airport
+        var airport = new AirportConfig
+        {
+            OrganizationId = organizationId,
+            IataCode = "CLJ",
+            Name = "Cluj-Napoca International Airport",
+            Timezone = "Europe/Bucharest",
+            MinTurnaroundMinutes = 35,
+        };
+        context.AirportConfigs.Add(airport);
+        await context.SaveChangesAsync();
+
+        // Seed 6 gates
+        var gates = new List<Gate>
+        {
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "A1", GateType = GateType.Domestic, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "A2", GateType = GateType.Domestic, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "A3", GateType = GateType.Both, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "B1", GateType = GateType.International, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "B2", GateType = GateType.International, SizeCategory = GateSizeCategory.Wide, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "B3", GateType = GateType.Both, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+        };
+        context.Gates.AddRange(gates);
+
+        // Seed 5 ground crews with shift patterns
+        var crews = new List<GroundCrew>
+        {
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Alpha", ShiftStart = new TimeOnly(6, 0), ShiftEnd = new TimeOnly(14, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Beta", ShiftStart = new TimeOnly(6, 0), ShiftEnd = new TimeOnly(14, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Gamma", ShiftStart = new TimeOnly(10, 0), ShiftEnd = new TimeOnly(18, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Delta", ShiftStart = new TimeOnly(14, 0), ShiftEnd = new TimeOnly(22, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Epsilon", ShiftStart = new TimeOnly(14, 0), ShiftEnd = new TimeOnly(22, 0), Status = CrewStatus.Available },
+        };
+        context.GroundCrews.AddRange(crews);
+
+        await context.SaveChangesAsync();
     }
 }
