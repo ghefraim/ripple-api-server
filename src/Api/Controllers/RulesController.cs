@@ -2,6 +2,7 @@ using Application.Features.Rules.CreateRule;
 using Application.Features.Rules.DeleteRule;
 using Application.Features.Rules.GetRuleById;
 using Application.Features.Rules.GetRules;
+using Application.Features.Rules.ParseRule;
 using Application.Features.Rules.UpdateRule;
 
 using Microsoft.AspNetCore.Authorization;
@@ -48,5 +49,15 @@ public class RulesController : ApiControllerBase
     {
         await Mediator.Send(new DeleteRuleCommand(id));
         return NoContent();
+    }
+
+    [HttpPost("parse")]
+    public async Task<IActionResult> Parse([FromBody] ParseRuleCommand command)
+    {
+        var result = await Mediator.Send(command);
+        if (!result.Success)
+            return UnprocessableEntity(new { error = result.ErrorMessage });
+
+        return Ok(result);
     }
 }
