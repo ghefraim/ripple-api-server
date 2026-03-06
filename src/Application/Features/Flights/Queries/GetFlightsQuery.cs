@@ -20,7 +20,8 @@ public record FlightResponse(
     DateTime? EstimatedTime,
     string? Gate,
     FlightStatus Status,
-    Guid? TurnaroundPairId
+    Guid? TurnaroundPairId,
+    string? CrewName
 );
 
 public class GetFlightsQueryHandler(ApplicationDbContext context)
@@ -35,6 +36,7 @@ public class GetFlightsQueryHandler(ApplicationDbContext context)
 
         var query = _context.Flights
             .Include(f => f.Gate)
+            .Include(f => f.Crew)
             .Where(f => f.ScheduledTime >= today && f.ScheduledTime < tomorrow)
             .AsQueryable();
 
@@ -56,7 +58,8 @@ public class GetFlightsQueryHandler(ApplicationDbContext context)
                 f.EstimatedTime,
                 f.Gate != null ? f.Gate.Code : null,
                 f.Status,
-                f.TurnaroundPairId
+                f.TurnaroundPairId,
+                f.Crew != null ? f.Crew.Name : null
             ))
             .ToListAsync(cancellationToken);
     }
