@@ -46,8 +46,20 @@ public static class ConfigureJWT
                 ClockSkew = TimeSpan.Zero, // Disable clock skew for precise expiration timing
             };
 
-            // Let JWT middleware handle authentication failures properly
-            // This will return 401 responses for expired/invalid tokens
+            o.Events = new JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    var accessToken = context.Request.Query["access_token"];
+                    var path = context.HttpContext.Request.Path;
+                    if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                    {
+                        context.Token = accessToken;
+                    }
+
+                    return Task.CompletedTask;
+                }
+            };
         });
 
         // This configures Google.Apis.Auth.AspNetCore3 for use in this app.

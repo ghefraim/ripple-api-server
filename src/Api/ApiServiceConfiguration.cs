@@ -13,6 +13,7 @@ public static class ApiServiceConfiguration
 {
     public static IServiceCollection AddApiServices(this IServiceCollection services, IConfiguration configuration)
     {
+        services.AddSignalR();
         services.AddControllers();
         services.AddEndpointsApiExplorer();
 

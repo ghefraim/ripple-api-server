@@ -1,4 +1,5 @@
-﻿using Api.Middleware;
+﻿using Api.Hubs;
+using Api.Middleware;
 
 using Application.Infrastructure.Persistence;
 
@@ -49,6 +50,7 @@ public static class ConfigurePipeline
         app.UseAuthorization();
 
         app.MapControllers();
+        app.MapHub<OperationsHub>("/hubs/operations");
 
         return app;
     }
