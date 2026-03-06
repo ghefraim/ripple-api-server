@@ -3,6 +3,7 @@ using Application.Common.Interfaces;
 using Application.Common.Security;
 using Application.Domain.Entities;
 using Application.Domain.Enums;
+using Application.Features.Disruptions.Events;
 using Application.Infrastructure.Persistence;
 using FluentValidation;
 using MediatR;
@@ -41,10 +42,12 @@ public class CreateDisruptionCommandValidator : AbstractValidator<CreateDisrupti
 
 public class CreateDisruptionCommandHandler(
     ApplicationDbContext context,
-    ICurrentUserService currentUserService) : IRequestHandler<CreateDisruptionCommand, CreateDisruptionResponse>
+    ICurrentUserService currentUserService,
+    IPublisher publisher) : IRequestHandler<CreateDisruptionCommand, CreateDisruptionResponse>
 {
     private readonly ApplicationDbContext _context = context;
     private readonly ICurrentUserService _currentUserService = currentUserService;
+    private readonly IPublisher _publisher = publisher;
 
     public async Task<CreateDisruptionResponse> Handle(CreateDisruptionCommand request, CancellationToken cancellationToken)
     {
@@ -73,6 +76,9 @@ public class CreateDisruptionCommandHandler(
 
         _context.Disruptions.Add(disruption);
         await _context.SaveChangesAsync(cancellationToken);
+
+        // Fire-and-forget: cascade + LLM + SignalR run in background
+        _ = _publisher.Publish(new DisruptionCreatedNotification(disruption.Id, organizationId), CancellationToken.None);
 
         return new CreateDisruptionResponse(
             disruption.Id,

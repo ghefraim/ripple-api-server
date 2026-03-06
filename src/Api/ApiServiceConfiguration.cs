@@ -1,8 +1,10 @@
 using System.Reflection;
 
 using Api.Filters;
+using Api.Services;
 
 using Application;
+using Application.Common.Interfaces;
 
 using FluentValidation;
 using FluentValidation.AspNetCore;
@@ -30,6 +32,7 @@ public static class ApiServiceConfiguration
         services.AddHttpContextAccessor();
 
         services.AddSingleton<ApiExceptionFilterAttribute>();
+        services.AddScoped<IOperationsNotifier, OperationsNotifier>();
 
         // CORS
         services.AddCors(options => options.AddPolicy(

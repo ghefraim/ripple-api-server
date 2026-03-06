@@ -1,4 +1,7 @@
 using Application.Features.Disruptions.CreateDisruption;
+using Application.Features.Disruptions.GetDisruptionById;
+using Application.Features.Disruptions.GetDisruptions;
+
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -11,6 +14,20 @@ public class DisruptionsController : ApiControllerBase
     public async Task<IActionResult> Create([FromBody] CreateDisruptionCommand command)
     {
         var result = await Mediator.Send(command);
-        return CreatedAtAction(nameof(Create), new { id = result.Id }, result);
+        return AcceptedAtAction(nameof(GetById), new { id = result.Id }, result);
+    }
+
+    [HttpGet("{id:guid}")]
+    public async Task<IActionResult> GetById(Guid id)
+    {
+        var result = await Mediator.Send(new GetDisruptionByIdQuery(id));
+        return Ok(result);
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetAll()
+    {
+        var result = await Mediator.Send(new GetDisruptionsQuery());
+        return Ok(result);
     }
 }
