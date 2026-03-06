@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Application.Features.Gates.GetGates;
 
 [Authorize]
-public record GetGatesQuery : IRequest<List<GateResponse>>;
+public record GetGatesQuery(DateTime? Date = null) : IRequest<List<GateResponse>>;
 
 public record GateResponse(
     Guid Id,
@@ -34,11 +34,10 @@ public class GetGatesQueryHandler(ApplicationDbContext context)
 
     public async Task<List<GateResponse>> Handle(GetGatesQuery request, CancellationToken cancellationToken)
     {
-        var today = DateTime.UtcNow.Date;
+        var today = request.Date?.Date ?? DateTime.UtcNow.Date;
         var tomorrow = today.AddDays(1);
 
         return await _context.Gates
-            .Include(g => g.Flights.Where(f => f.ScheduledTime >= today && f.ScheduledTime < tomorrow))
             .OrderBy(g => g.Code)
             .Select(g => new GateResponse(
                 g.Id,
@@ -47,6 +46,7 @@ public class GetGatesQueryHandler(ApplicationDbContext context)
                 g.SizeCategory,
                 g.IsActive,
                 g.Flights
+                    .Where(f => f.ScheduledTime >= today && f.ScheduledTime < tomorrow)
                     .OrderBy(f => f.ScheduledTime)
                     .Select(f => new GateFlightResponse(
                         f.Id,

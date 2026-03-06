@@ -25,9 +25,9 @@ public class DisruptionsController : ApiControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] DateTime? date)
     {
-        var result = await Mediator.Send(new GetDisruptionsQuery());
+        var result = await Mediator.Send(new GetDisruptionsQuery(date));
         return Ok(result);
     }
 }
