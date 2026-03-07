@@ -21,7 +21,7 @@ public record ImportGateItem(string Code, string GateType, string SizeCategory);
 public class ImportGatesCommandValidator : AbstractValidator<ImportGatesCommand>
 {
     private const long MaxFileSizeBytes = 5 * 1024 * 1024;
-    private static readonly string[] AllowedExtensions = { ".xlsx", ".xls" };
+    private static readonly string[] AllowedExtensions = { ".xlsx", ".xls", ".csv" };
 
     public ImportGatesCommandValidator()
     {
@@ -73,11 +73,11 @@ public class ImportGatesCommandHandler(
         List<Dictionary<string, string>> rows;
         try
         {
-            rows = ExcelParser.ParseExcelFile(request.File, headerAliases);
+            rows = FileParser.ParseFile(request.File, headerAliases);
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"Failed to parse Excel file: {ex.Message}", ex);
+            throw new InvalidOperationException($"Failed to parse file: {ex.Message}", ex);
         }
 
         if (rows.Count == 0)

@@ -1,5 +1,7 @@
+using Application.Common.Interfaces;
 using Application.Features.Gates.CreateGate;
 using Application.Features.Gates.DeleteGate;
+using Application.Features.Gates.ExportGates;
 using Application.Features.Gates.GetGates;
 using Application.Features.Gates.ImportGates;
 using Application.Features.Gates.UpdateGate;
@@ -9,8 +11,9 @@ using Microsoft.AspNetCore.Mvc;
 namespace Api.Controllers;
 
 [Authorize]
-public class GatesController : ApiControllerBase
+public class GatesController(ICsvFileBuilder csvFileBuilder) : ApiControllerBase
 {
+    private readonly ICsvFileBuilder _csvFileBuilder = csvFileBuilder;
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] DateTime? date)
     {
@@ -44,5 +47,14 @@ public class GatesController : ApiControllerBase
         var command = new ImportGatesCommand(file);
         var result = await Mediator.Send(command);
         return Ok(result);
+    }
+
+    [HttpGet("export")]
+    public async Task<IActionResult> Export()
+    {
+        var records = await Mediator.Send(new ExportGatesQuery());
+        var fileContent = _csvFileBuilder.BuildGatesFile(records);
+        var fileName = $"gates-export-{DateTime.UtcNow:yyyy-MM-dd}.csv";
+        return File(fileContent, "text/csv", fileName);
     }
 }

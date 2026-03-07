@@ -1,4 +1,6 @@
+using Application.Common.Interfaces;
 using Application.Domain.Enums;
+using Application.Features.Flights.ExportFlights;
 using Application.Features.Flights.GetFlightById;
 using Application.Features.Flights.GetFlights;
 using Application.Features.Flights.ImportFlights;
@@ -8,8 +10,9 @@ using Microsoft.AspNetCore.Mvc;
 namespace Api.Controllers;
 
 [Authorize]
-public class FlightsController : ApiControllerBase
+public class FlightsController(ICsvFileBuilder csvFileBuilder) : ApiControllerBase
 {
+    private readonly ICsvFileBuilder _csvFileBuilder = csvFileBuilder;
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] FlightStatus? status)
     {
@@ -33,5 +36,14 @@ public class FlightsController : ApiControllerBase
         var command = new ImportFlightsCommand(file, date);
         var result = await Mediator.Send(command);
         return Ok(result);
+    }
+
+    [HttpGet("export")]
+    public async Task<IActionResult> Export([FromQuery] FlightStatus? status)
+    {
+        var records = await Mediator.Send(new ExportFlightsQuery(status));
+        var fileContent = _csvFileBuilder.BuildFlightsFile(records);
+        var fileName = $"flights-{DateTime.UtcNow:yyyy-MM-dd}.csv";
+        return File(fileContent, "text/csv", fileName);
     }
 }
