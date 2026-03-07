@@ -1,7 +1,9 @@
+using Application.Common.Interfaces;
 using Application.Features.Crew.AddCrewContact;
 using Application.Features.Crew.CreateCrew;
 using Application.Features.Crew.DeleteCrew;
 using Application.Features.Crew.DeleteCrewContact;
+using Application.Features.Crew.ExportCrews;
 using Application.Features.Crew.GetCrewById;
 using Application.Features.Crew.GetCrews;
 using Application.Features.Crew.ImportCrewContacts;
@@ -13,8 +15,9 @@ using Microsoft.AspNetCore.Mvc;
 namespace Api.Controllers;
 
 [Authorize]
-public class CrewController : ApiControllerBase
+public class CrewController(ICsvFileBuilder csvFileBuilder) : ApiControllerBase
 {
+    private readonly ICsvFileBuilder _csvFileBuilder = csvFileBuilder;
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
@@ -57,6 +60,15 @@ public class CrewController : ApiControllerBase
         var command = new ImportCrewsCommand(file);
         var result = await Mediator.Send(command);
         return Ok(result);
+    }
+
+    [HttpGet("export")]
+    public async Task<IActionResult> Export()
+    {
+        var records = await Mediator.Send(new ExportCrewsQuery());
+        var fileContent = _csvFileBuilder.BuildCrewsFile(records);
+        var fileName = $"crews-export-{DateTime.UtcNow:yyyy-MM-dd}.csv";
+        return File(fileContent, "text/csv", fileName);
     }
 
     [HttpPost("{crewId:guid}/contacts")]

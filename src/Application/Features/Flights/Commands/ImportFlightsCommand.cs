@@ -34,7 +34,7 @@ public record ImportFlightItem(
 public class ImportFlightsCommandValidator : AbstractValidator<ImportFlightsCommand>
 {
     private const long MaxFileSizeBytes = 5 * 1024 * 1024;
-    private static readonly string[] AllowedExtensions = { ".xlsx", ".xls" };
+    private static readonly string[] AllowedExtensions = { ".xlsx", ".xls", ".csv" };
 
     public ImportFlightsCommandValidator()
     {
@@ -92,11 +92,11 @@ public class ImportFlightsCommandHandler(
         List<Dictionary<string, string>> rows;
         try
         {
-            rows = ExcelParser.ParseExcelFile(request.File, headerAliases);
+            rows = FileParser.ParseFile(request.File, headerAliases);
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"Failed to parse Excel file: {ex.Message}", ex);
+            throw new InvalidOperationException($"Failed to parse file: {ex.Message}", ex);
         }
 
         if (rows.Count == 0)
