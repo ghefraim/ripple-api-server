@@ -104,6 +104,7 @@ public static class InfrastructureServiceConfiguration
         }
 
         services.AddHttpClient("GeminiLlm");
+        services.AddHttpClient("AviationStack");
 
         var llmProvider = configuration.GetValue<string>("LlmProvider") ?? "Gemini";
         if (llmProvider == "Gemini")

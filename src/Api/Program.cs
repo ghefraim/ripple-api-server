@@ -20,13 +20,15 @@ builder.Services.AddApiServices(builder.Configuration);
 // Configure the HTTP request pipeline.
 var app = await builder.Build().ConfigurePipelineAsync();
 
-// Initialize roles (must run before seed which assigns roles to demo users)
-await IdentityInitializer.InitializeAsync(app.Services);
-
-// Initialize database and seed demo data
+// Initialize database (runs migrations), then roles, then seed demo data
 if (app.Environment.IsDevelopment())
 {
     await app.InitialiseDatabaseAsync();
+}
+else
+{
+    // In non-dev, still ensure roles exist (tables must already exist)
+    await IdentityInitializer.InitializeAsync(app.Services);
 }
 
 app.Run();

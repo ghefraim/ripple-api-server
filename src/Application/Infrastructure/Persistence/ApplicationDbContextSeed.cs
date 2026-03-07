@@ -12,76 +12,91 @@ public static class ApplicationDbContextSeed
     {
         await SeedPlansAsync(context);
         await SeedTodoListsAsync(context);
-        var org = await SeedDemoUsersAsync(context, userManager);
-        if (org != null)
-        {
-            await SeedAirportForOrganizationAsync(context, org.Id);
-        }
-        else
-        {
-            await SeedAirportDataAsync(context);
-        }
+        await SeedDemoDataAsync(context, userManager);
     }
 
-    private static async Task<Organization?> SeedDemoUsersAsync(ApplicationDbContext context, UserManager<ApplicationUser> userManager)
+    private static async Task SeedDemoDataAsync(ApplicationDbContext context, UserManager<ApplicationUser> userManager)
     {
-        // Check if demo org already exists
+        var cljOrg = await SeedOrganizationWithUsersAsync(context, userManager,
+            orgName: "CLJ Operations",
+            orgDescription: "Cluj-Napoca Airport operations workspace",
+            users: new[]
+            {
+                ("admin@clj.demo", OrganizationRole.Owner),
+                ("ops@clj.demo", OrganizationRole.Member),
+                ("crew@clj.demo", OrganizationRole.Member),
+            });
+
+        var otpOrg = await SeedOrganizationWithUsersAsync(context, userManager,
+            orgName: "OTP Operations",
+            orgDescription: "Bucharest Henri Coanda Airport operations workspace",
+            users: new[]
+            {
+                ("admin@otp.demo", OrganizationRole.Owner),
+                ("ops@otp.demo", OrganizationRole.Member),
+                ("crew@otp.demo", OrganizationRole.Member),
+            });
+
+        if (cljOrg != null)
+            await SeedAirportForOrganizationAsync(context, cljOrg.Id, "CLJ", "Cluj-Napoca International Airport", "Europe/Bucharest");
+
+        if (otpOrg != null)
+            await SeedAirportForOrganizationAsync(context, otpOrg.Id, "OTP", "Henri Coanda International Airport", "Europe/Bucharest");
+    }
+
+    private static async Task<Organization?> SeedOrganizationWithUsersAsync(
+        ApplicationDbContext context,
+        UserManager<ApplicationUser> userManager,
+        string orgName,
+        string orgDescription,
+        (string Email, OrganizationRole Role)[] users)
+    {
         var existingOrg = await context.Organizations
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(o => o.Name == "Ripple Demo");
+            .FirstOrDefaultAsync(o => o.Name == orgName);
 
         if (existingOrg != null)
             return null;
 
-        // Create demo users
-        var demoUsers = new[]
-        {
-            new { Email = "admin@ripple.demo", UserName = "admin@ripple.demo", Password = "Demo123!", Role = OrganizationRole.Owner },
-            new { Email = "ops@ripple.demo", UserName = "ops@ripple.demo", Password = "Demo123!", Role = OrganizationRole.Member },
-            new { Email = "crew@ripple.demo", UserName = "crew@ripple.demo", Password = "Demo123!", Role = OrganizationRole.Member },
-        };
-
         var createdUsers = new List<(ApplicationUser User, OrganizationRole Role)>();
-        foreach (var demo in demoUsers)
+        foreach (var (email, role) in users)
         {
-            var existing = await userManager.FindByEmailAsync(demo.Email);
+            var existing = await userManager.FindByEmailAsync(email);
             if (existing != null)
             {
-                createdUsers.Add((existing, demo.Role));
+                createdUsers.Add((existing, role));
                 continue;
             }
 
             var user = new ApplicationUser
             {
-                Email = demo.Email,
-                UserName = demo.UserName,
+                Email = email,
+                UserName = email,
                 EmailConfirmed = true,
                 CreatedOn = DateTime.UtcNow,
             };
 
-            var result = await userManager.CreateAsync(user, demo.Password);
+            var result = await userManager.CreateAsync(user, "Demo123!");
             if (!result.Succeeded)
                 continue;
 
             await userManager.AddToRoleAsync(user, "User");
-            createdUsers.Add((user, demo.Role));
+            createdUsers.Add((user, role));
         }
 
         if (createdUsers.Count == 0)
             return null;
 
-        // Create demo organization
         var org = new Organization
         {
-            Name = "Ripple Demo",
-            Description = "Demo airport operations workspace",
+            Name = orgName,
+            Description = orgDescription,
             CreatedOn = DateTime.UtcNow,
             CreatedBy = "seed",
         };
         context.Organizations.Add(org);
         await context.SaveChangesAsync();
 
-        // Link users to org
         foreach (var (user, role) in createdUsers)
         {
             context.UserOrganizations.Add(new UserOrganization
@@ -101,9 +116,7 @@ public static class ApplicationDbContextSeed
     private static async Task SeedPlansAsync(ApplicationDbContext context)
     {
         if (context.Plans.Any())
-        {
             return;
-        }
 
         var freePlan = new Plan
         {
@@ -177,26 +190,12 @@ public static class ApplicationDbContextSeed
         }
     }
 
-    private static async Task SeedAirportDataAsync(ApplicationDbContext context)
-    {
-        var organizations = await context.Organizations
-            .IgnoreQueryFilters()
-            .ToListAsync();
-
-        foreach (var org in organizations)
-        {
-            var hasAirport = await context.AirportConfigs
-                .IgnoreQueryFilters()
-                .AnyAsync(a => a.OrganizationId == org.Id);
-
-            if (hasAirport)
-                continue;
-
-            await SeedAirportForOrganizationAsync(context, org.Id);
-        }
-    }
-
-    private static async Task SeedAirportForOrganizationAsync(ApplicationDbContext context, Guid organizationId)
+    private static async Task SeedAirportForOrganizationAsync(
+        ApplicationDbContext context,
+        Guid organizationId,
+        string iataCode,
+        string airportName,
+        string timezone)
     {
         var hasAirport = await context.AirportConfigs
             .IgnoreQueryFilters()
@@ -208,393 +207,83 @@ public static class ApplicationDbContextSeed
         var airport = new AirportConfig
         {
             OrganizationId = organizationId,
-            IataCode = "CLJ",
-            Name = "Cluj-Napoca International Airport",
-            Timezone = "Europe/Bucharest",
+            IataCode = iataCode,
+            Name = airportName,
+            Timezone = timezone,
             MinTurnaroundMinutes = 35,
+            FlightDataSource = FlightDataSource.AviationApi,
         };
         context.AirportConfigs.Add(airport);
         await context.SaveChangesAsync();
 
+        if (iataCode == "CLJ")
+            await SeedCljAirportDataAsync(context, organizationId, airport.Id);
+        else if (iataCode == "OTP")
+            await SeedOtpAirportDataAsync(context, organizationId, airport.Id);
+    }
+
+    private static async Task SeedCljAirportDataAsync(ApplicationDbContext context, Guid organizationId, Guid airportId)
+    {
         var gates = new List<Gate>
         {
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "A1", GateType = GateType.Domestic, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "A2", GateType = GateType.Domestic, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "A3", GateType = GateType.Both, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "B1", GateType = GateType.International, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "B2", GateType = GateType.International, SizeCategory = GateSizeCategory.Wide, IsActive = true },
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Code = "B3", GateType = GateType.Both, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "A1", GateType = GateType.Domestic, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "A2", GateType = GateType.Domestic, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "A3", GateType = GateType.Both, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "B1", GateType = GateType.International, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "B2", GateType = GateType.International, SizeCategory = GateSizeCategory.Wide, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "B3", GateType = GateType.Both, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
         };
         context.Gates.AddRange(gates);
 
         var crews = new List<GroundCrew>
         {
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Alpha", ShiftStart = new TimeOnly(6, 0), ShiftEnd = new TimeOnly(14, 0), Status = CrewStatus.Available },
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Beta", ShiftStart = new TimeOnly(6, 0), ShiftEnd = new TimeOnly(14, 0), Status = CrewStatus.Available },
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Gamma", ShiftStart = new TimeOnly(10, 0), ShiftEnd = new TimeOnly(18, 0), Status = CrewStatus.Available },
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Delta", ShiftStart = new TimeOnly(14, 0), ShiftEnd = new TimeOnly(22, 0), Status = CrewStatus.Available },
-            new() { OrganizationId = organizationId, AirportId = airport.Id, Name = "Epsilon", ShiftStart = new TimeOnly(14, 0), ShiftEnd = new TimeOnly(22, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Alpha", ShiftStart = new TimeOnly(6, 0), ShiftEnd = new TimeOnly(14, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Beta", ShiftStart = new TimeOnly(6, 0), ShiftEnd = new TimeOnly(14, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Gamma", ShiftStart = new TimeOnly(10, 0), ShiftEnd = new TimeOnly(18, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Delta", ShiftStart = new TimeOnly(14, 0), ShiftEnd = new TimeOnly(22, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Epsilon", ShiftStart = new TimeOnly(14, 0), ShiftEnd = new TimeOnly(22, 0), Status = CrewStatus.Available },
         };
         context.GroundCrews.AddRange(crews);
 
         await context.SaveChangesAsync();
 
-        await SeedFlightsAsync(context, organizationId, airport.Id, gates, crews);
-        await SeedDisruptionsAsync(context, organizationId, airport.Id);
-        await SeedRulesAsync(context, organizationId, airport.Id);
+        await SeedRulesAsync(context, organizationId, airportId);
     }
 
-    private static async Task SeedFlightsAsync(
-        ApplicationDbContext context,
-        Guid organizationId,
-        Guid airportId,
-        List<Gate> gates,
-        List<GroundCrew> crews)
+    private static async Task SeedOtpAirportDataAsync(ApplicationDbContext context, Guid organizationId, Guid airportId)
     {
-        var hasFlights = await context.Flights
-            .IgnoreQueryFilters()
-            .AnyAsync(f => f.OrganizationId == organizationId);
+        var gates = new List<Gate>
+        {
+            // Terminal 1 - Domestic / Schengen
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "T1-A1", GateType = GateType.Domestic, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "T1-A2", GateType = GateType.Domestic, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "T1-A3", GateType = GateType.Both, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "T1-B1", GateType = GateType.Both, SizeCategory = GateSizeCategory.Wide, IsActive = true },
+            // Terminal 2 - International / Non-Schengen
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "T2-C1", GateType = GateType.International, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "T2-C2", GateType = GateType.International, SizeCategory = GateSizeCategory.Wide, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "T2-C3", GateType = GateType.International, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "T2-D1", GateType = GateType.International, SizeCategory = GateSizeCategory.Wide, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "T2-D2", GateType = GateType.Both, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+            new() { OrganizationId = organizationId, AirportId = airportId, Code = "T2-D3", GateType = GateType.International, SizeCategory = GateSizeCategory.Narrow, IsActive = true },
+        };
+        context.Gates.AddRange(gates);
 
-        if (hasFlights)
-            return;
+        var crews = new List<GroundCrew>
+        {
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Alpha-T1", ShiftStart = new TimeOnly(5, 0), ShiftEnd = new TimeOnly(13, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Bravo-T1", ShiftStart = new TimeOnly(5, 0), ShiftEnd = new TimeOnly(13, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Charlie-T1", ShiftStart = new TimeOnly(13, 0), ShiftEnd = new TimeOnly(21, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Delta-T2", ShiftStart = new TimeOnly(5, 0), ShiftEnd = new TimeOnly(13, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Echo-T2", ShiftStart = new TimeOnly(9, 0), ShiftEnd = new TimeOnly(17, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Foxtrot-T2", ShiftStart = new TimeOnly(13, 0), ShiftEnd = new TimeOnly(21, 0), Status = CrewStatus.Available },
+            new() { OrganizationId = organizationId, AirportId = airportId, Name = "Golf-T2", ShiftStart = new TimeOnly(17, 0), ShiftEnd = new TimeOnly(1, 0), Status = CrewStatus.Available },
+        };
+        context.GroundCrews.AddRange(crews);
 
-        var today = DateTime.UtcNow.Date;
-        var gateMap = gates.ToDictionary(g => g.Code, g => g.Id);
-        var crewMap = crews.ToDictionary(c => c.Name, c => c.Id);
-
-        var w6_2901 = new Flight
-        {
-            OrganizationId = organizationId, AirportId = airportId,
-            FlightNumber = "W6-2901", Airline = "Wizz Air",
-            Origin = "LTN", Destination = "CLJ",
-            Direction = FlightDirection.Arrival, FlightType = FlightType.International,
-            Status = FlightStatus.OnTime,
-            ScheduledTime = today.AddHours(10).AddMinutes(30),
-            EstimatedTime = today.AddHours(10).AddMinutes(30),
-            GateId = gateMap["A3"], CrewId = crewMap["Alpha"],
-        };
-        var w6_2902 = new Flight
-        {
-            OrganizationId = organizationId, AirportId = airportId,
-            FlightNumber = "W6-2902", Airline = "Wizz Air",
-            Origin = "CLJ", Destination = "LTN",
-            Direction = FlightDirection.Departure, FlightType = FlightType.International,
-            Status = FlightStatus.OnTime,
-            ScheduledTime = today.AddHours(11).AddMinutes(15),
-            EstimatedTime = today.AddHours(11).AddMinutes(15),
-            GateId = gateMap["A3"], CrewId = crewMap["Alpha"],
-        };
-
-        var ro_361 = new Flight
-        {
-            OrganizationId = organizationId, AirportId = airportId,
-            FlightNumber = "RO-361", Airline = "TAROM",
-            Origin = "OTP", Destination = "CLJ",
-            Direction = FlightDirection.Arrival, FlightType = FlightType.Domestic,
-            Status = FlightStatus.OnTime,
-            ScheduledTime = today.AddHours(8),
-            EstimatedTime = today.AddHours(8),
-            GateId = gateMap["A1"], CrewId = crewMap["Beta"],
-        };
-        var ro_362 = new Flight
-        {
-            OrganizationId = organizationId, AirportId = airportId,
-            FlightNumber = "RO-362", Airline = "TAROM",
-            Origin = "CLJ", Destination = "OTP",
-            Direction = FlightDirection.Departure, FlightType = FlightType.Domestic,
-            Status = FlightStatus.OnTime,
-            ScheduledTime = today.AddHours(8).AddMinutes(40),
-            EstimatedTime = today.AddHours(8).AddMinutes(40),
-            GateId = gateMap["A1"], CrewId = crewMap["Beta"],
-        };
-
-        var fr_1823 = new Flight
-        {
-            OrganizationId = organizationId, AirportId = airportId,
-            FlightNumber = "FR-1823", Airline = "Ryanair",
-            Origin = "BGY", Destination = "CLJ",
-            Direction = FlightDirection.Arrival, FlightType = FlightType.International,
-            Status = FlightStatus.OnTime,
-            ScheduledTime = today.AddHours(12),
-            EstimatedTime = today.AddHours(12),
-            GateId = gateMap["B1"], CrewId = crewMap["Gamma"],
-        };
-        var fr_1824 = new Flight
-        {
-            OrganizationId = organizationId, AirportId = airportId,
-            FlightNumber = "FR-1824", Airline = "Ryanair",
-            Origin = "CLJ", Destination = "BGY",
-            Direction = FlightDirection.Departure, FlightType = FlightType.International,
-            Status = FlightStatus.OnTime,
-            ScheduledTime = today.AddHours(12).AddMinutes(35),
-            EstimatedTime = today.AddHours(12).AddMinutes(35),
-            GateId = gateMap["B1"], CrewId = crewMap["Gamma"],
-        };
-
-        var lh_1417 = new Flight
-        {
-            OrganizationId = organizationId, AirportId = airportId,
-            FlightNumber = "LH-1417", Airline = "Lufthansa",
-            Origin = "MUC", Destination = "CLJ",
-            Direction = FlightDirection.Arrival, FlightType = FlightType.International,
-            Status = FlightStatus.OnTime,
-            ScheduledTime = today.AddHours(14),
-            EstimatedTime = today.AddHours(14),
-            GateId = gateMap["B2"], CrewId = crewMap["Delta"],
-        };
-        var lh_1418 = new Flight
-        {
-            OrganizationId = organizationId, AirportId = airportId,
-            FlightNumber = "LH-1418", Airline = "Lufthansa",
-            Origin = "CLJ", Destination = "MUC",
-            Direction = FlightDirection.Departure, FlightType = FlightType.International,
-            Status = FlightStatus.OnTime,
-            ScheduledTime = today.AddHours(15),
-            EstimatedTime = today.AddHours(15),
-            GateId = gateMap["B2"], CrewId = crewMap["Delta"],
-        };
-
-        var flights = new List<Flight>
-        {
-            w6_2901, w6_2902, ro_361, ro_362, fr_1823, fr_1824, lh_1417, lh_1418,
-            new()
-            {
-                OrganizationId = organizationId, AirportId = airportId,
-                FlightNumber = "W6-2907", Airline = "Wizz Air",
-                Origin = "BVA", Destination = "CLJ",
-                Direction = FlightDirection.Arrival, FlightType = FlightType.International,
-                Status = FlightStatus.OnTime,
-                ScheduledTime = today.AddHours(6).AddMinutes(30),
-                EstimatedTime = today.AddHours(6).AddMinutes(30),
-                GateId = gateMap["A2"], CrewId = crewMap["Beta"],
-            },
-            new()
-            {
-                OrganizationId = organizationId, AirportId = airportId,
-                FlightNumber = "W6-3105", Airline = "Wizz Air",
-                Origin = "CLJ", Destination = "DTM",
-                Direction = FlightDirection.Departure, FlightType = FlightType.International,
-                Status = FlightStatus.OnTime,
-                ScheduledTime = today.AddHours(7),
-                EstimatedTime = today.AddHours(7),
-                GateId = gateMap["A2"],
-            },
-            new()
-            {
-                OrganizationId = organizationId, AirportId = airportId,
-                FlightNumber = "RO-371", Airline = "TAROM",
-                Origin = "IAS", Destination = "CLJ",
-                Direction = FlightDirection.Arrival, FlightType = FlightType.Domestic,
-                Status = FlightStatus.OnTime,
-                ScheduledTime = today.AddHours(9).AddMinutes(30),
-                EstimatedTime = today.AddHours(9).AddMinutes(30),
-                GateId = gateMap["A1"],
-            },
-            new()
-            {
-                OrganizationId = organizationId, AirportId = airportId,
-                FlightNumber = "RO-391", Airline = "TAROM",
-                Origin = "CLJ", Destination = "IAS",
-                Direction = FlightDirection.Departure, FlightType = FlightType.Domestic,
-                Status = FlightStatus.OnTime,
-                ScheduledTime = today.AddHours(11),
-                EstimatedTime = today.AddHours(11),
-                GateId = gateMap["A1"],
-            },
-            new()
-            {
-                OrganizationId = organizationId, AirportId = airportId,
-                FlightNumber = "W6-2905", Airline = "Wizz Air",
-                Origin = "CLJ", Destination = "BCN",
-                Direction = FlightDirection.Departure, FlightType = FlightType.International,
-                Status = FlightStatus.OnTime,
-                ScheduledTime = today.AddHours(13),
-                EstimatedTime = today.AddHours(13),
-                GateId = gateMap["A3"],
-            },
-            new()
-            {
-                OrganizationId = organizationId, AirportId = airportId,
-                FlightNumber = "FR-1831", Airline = "Ryanair",
-                Origin = "CRL", Destination = "CLJ",
-                Direction = FlightDirection.Arrival, FlightType = FlightType.International,
-                Status = FlightStatus.OnTime,
-                ScheduledTime = today.AddHours(15).AddMinutes(30),
-                EstimatedTime = today.AddHours(15).AddMinutes(30),
-                GateId = gateMap["B3"],
-            },
-            new()
-            {
-                OrganizationId = organizationId, AirportId = airportId,
-                FlightNumber = "RO-381", Airline = "TAROM",
-                Origin = "CLJ", Destination = "TSR",
-                Direction = FlightDirection.Departure, FlightType = FlightType.Domestic,
-                Status = FlightStatus.OnTime,
-                ScheduledTime = today.AddHours(16),
-                EstimatedTime = today.AddHours(16),
-                GateId = gateMap["A2"],
-            },
-            new()
-            {
-                OrganizationId = organizationId, AirportId = airportId,
-                FlightNumber = "W6-2911", Airline = "Wizz Air",
-                Origin = "FCO", Destination = "CLJ",
-                Direction = FlightDirection.Arrival, FlightType = FlightType.International,
-                Status = FlightStatus.OnTime,
-                ScheduledTime = today.AddHours(17),
-                EstimatedTime = today.AddHours(17),
-                GateId = gateMap["B1"], CrewId = crewMap["Delta"],
-            },
-            new()
-            {
-                OrganizationId = organizationId, AirportId = airportId,
-                FlightNumber = "LH-1419", Airline = "Lufthansa",
-                Origin = "CLJ", Destination = "FRA",
-                Direction = FlightDirection.Departure, FlightType = FlightType.International,
-                Status = FlightStatus.OnTime,
-                ScheduledTime = today.AddHours(18),
-                EstimatedTime = today.AddHours(18),
-                GateId = gateMap["B2"], CrewId = crewMap["Epsilon"],
-            },
-            new()
-            {
-                OrganizationId = organizationId, AirportId = airportId,
-                FlightNumber = "FR-1841", Airline = "Ryanair",
-                Origin = "CLJ", Destination = "MAD",
-                Direction = FlightDirection.Departure, FlightType = FlightType.International,
-                Status = FlightStatus.OnTime,
-                ScheduledTime = today.AddHours(19),
-                EstimatedTime = today.AddHours(19),
-                GateId = gateMap["B3"], CrewId = crewMap["Epsilon"],
-            },
-        };
-
-        context.Flights.AddRange(flights);
         await context.SaveChangesAsync();
 
-        w6_2901.TurnaroundPairId = w6_2902.Id;
-        w6_2902.TurnaroundPairId = w6_2901.Id;
-        ro_361.TurnaroundPairId = ro_362.Id;
-        ro_362.TurnaroundPairId = ro_361.Id;
-        fr_1823.TurnaroundPairId = fr_1824.Id;
-        fr_1824.TurnaroundPairId = fr_1823.Id;
-        lh_1417.TurnaroundPairId = lh_1418.Id;
-        lh_1418.TurnaroundPairId = lh_1417.Id;
-
-        var alphaCrewEntity = crews.First(c => c.Name == "Alpha");
-        alphaCrewEntity.Status = CrewStatus.Assigned;
-
-        await context.SaveChangesAsync();
-    }
-
-    private static async Task SeedDisruptionsAsync(
-        ApplicationDbContext context,
-        Guid organizationId,
-        Guid airportId)
-    {
-        var hasDisruptions = await context.Disruptions
-            .IgnoreQueryFilters()
-            .AnyAsync(d => d.OrganizationId == organizationId);
-
-        if (hasDisruptions)
-            return;
-
-        var flights = await context.Flights
-            .IgnoreQueryFilters()
-            .Where(f => f.OrganizationId == organizationId)
-            .ToListAsync();
-
-        var flightMap = flights.ToDictionary(f => f.FlightNumber, f => f);
-        var now = DateTime.UtcNow;
-
-        // Disruption 1: FR-1823 gate change due to maintenance on B1
-        var gateChange = new Disruption
-        {
-            OrganizationId = organizationId,
-            AirportId = airportId,
-            FlightId = flightMap["FR-1823"].Id,
-            Type = DisruptionType.GateChange,
-            DetailsJson = """{"original_gate":"B1","new_gate":"B3","reason":"Unscheduled jet bridge maintenance on B1"}""",
-            ReportedBy = "Maintenance Ops",
-            ReportedAt = now.AddMinutes(-15),
-            Status = DisruptionStatus.Active,
-        };
-        context.Disruptions.Add(gateChange);
-        await context.SaveChangesAsync();
-
-        context.CascadeImpacts.Add(new CascadeImpact
-        {
-            OrganizationId = organizationId,
-            DisruptionId = gateChange.Id,
-            AffectedFlightId = flightMap["FR-1824"].Id,
-            ImpactType = CascadeImpactType.GateConflict,
-            Severity = Severity.Warning,
-            Details = """{"conflict_gate":"B3","conflicting_flight":"FR-1831","overlap_window":"12:00-12:35 vs 15:30","resolution":"Tight but manageable if FR-1823/1824 departs on time"}""",
-        });
-
-        context.ActionPlans.Add(new ActionPlan
-        {
-            OrganizationId = organizationId,
-            DisruptionId = gateChange.Id,
-            LlmOutputText = "Gate B1 is offline for jet bridge maintenance. FR-1823 rerouted to B3. The turnaround pair FR-1823/1824 must depart by 12:35 to avoid conflict with FR-1831 at 15:30. Crew Gamma is already assigned — no crew change needed.",
-            ActionsJson = """[{"action":"reassign_gate","flight":"FR-1823","from_gate":"B1","to_gate":"B3"},{"action":"reassign_gate","flight":"FR-1824","from_gate":"B1","to_gate":"B3"},{"action":"monitor","flight":"FR-1824","condition":"must_depart_by_12:35"}]""",
-            GeneratedAt = now.AddMinutes(-13),
-        });
-        await context.SaveChangesAsync();
-
-        // Disruption 2: RO-361 — 20 min delay (resolved)
-        var ro_361 = flightMap["RO-361"];
-        ro_361.Status = FlightStatus.Delayed;
-        ro_361.EstimatedTime = ro_361.ScheduledTime.AddMinutes(20);
-
-        var delay = new Disruption
-        {
-            OrganizationId = organizationId,
-            AirportId = airportId,
-            FlightId = ro_361.Id,
-            Type = DisruptionType.Delay,
-            DetailsJson = """{"delayMinutes":20,"reason":"Late inbound aircraft from Bucharest","originalEta":"08:00","newEta":"08:20"}""",
-            ReportedBy = "Airline Ops (TAROM)",
-            ReportedAt = now.AddMinutes(-60),
-            Status = DisruptionStatus.Resolved,
-        };
-        context.Disruptions.Add(delay);
-        await context.SaveChangesAsync();
-
-        var ro_362 = flightMap["RO-362"];
-        ro_362.Status = FlightStatus.Delayed;
-        ro_362.EstimatedTime = ro_362.ScheduledTime.AddMinutes(15);
-
-        context.CascadeImpacts.Add(new CascadeImpact
-        {
-            OrganizationId = organizationId,
-            DisruptionId = delay.Id,
-            AffectedFlightId = ro_362.Id,
-            ImpactType = CascadeImpactType.TurnaroundBreach,
-            Severity = Severity.Warning,
-            Details = """{"turnaround_available_minutes":20,"minimum_required_minutes":35,"status":"resolved_with_delay"}""",
-        });
-
-        context.CascadeImpacts.Add(new CascadeImpact
-        {
-            OrganizationId = organizationId,
-            DisruptionId = delay.Id,
-            AffectedFlightId = flightMap["RO-371"].Id,
-            ImpactType = CascadeImpactType.DownstreamDelay,
-            Severity = Severity.Info,
-            Details = """{"reason":"Gate A1 occupied 15 min longer than scheduled","impact_minutes":15,"status":"absorbed_by_buffer"}""",
-        });
-
-        context.ActionPlans.Add(new ActionPlan
-        {
-            OrganizationId = organizationId,
-            DisruptionId = delay.Id,
-            LlmOutputText = "RO-361 delayed 20 minutes due to late inbound from Bucharest. Turnaround with RO-362 is now below minimum. Recommended delaying RO-362 by 15 minutes and expediting ground handling. RO-371 at gate A1 has sufficient buffer to absorb the knock-on delay.",
-            ActionsJson = """[{"action":"delay_departure","flight":"RO-362","new_time":"08:55"},{"action":"expedite_handling","flight":"RO-361"},{"action":"monitor","flight":"RO-371","condition":"gate_availability"}]""",
-            GeneratedAt = now.AddMinutes(-58),
-        });
-
-        await context.SaveChangesAsync();
+        await SeedRulesAsync(context, organizationId, airportId);
     }
 
     private static async Task SeedRulesAsync(

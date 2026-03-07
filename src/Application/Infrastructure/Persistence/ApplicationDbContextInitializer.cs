@@ -1,4 +1,5 @@
 using Application.Domain.Entities;
+using Application.Infrastructure.Identity;
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
@@ -18,8 +19,9 @@ public static class InitialiserExtensions
         // Get inititalizer from scope
         var initialiser = scope.ServiceProvider.GetRequiredService<ApplicationDbContextInitialiser>();
 
-        // Initialize and seed
+        // Migrate, then init roles, then seed
         await initialiser.InitialiseAsync();
+        await IdentityInitializer.InitializeAsync(app.Services);
         await initialiser.SeedAsync();
     }
 }

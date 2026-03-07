@@ -1,4 +1,5 @@
 using Application.Domain.Common;
+using Application.Domain.Enums;
 
 namespace Application.Domain.Entities;
 
@@ -15,6 +16,10 @@ public class AirportConfig : AuditableEntity, IOrganizationScoped
     public string? ConfigJson { get; set; }
 
     public int MinTurnaroundMinutes { get; set; } = 35;
+
+    public FlightDataSource FlightDataSource { get; set; } = FlightDataSource.Manual;
+    public string? FlightDataSourceConfigJson { get; set; }
+    public DateTime? LastSyncedAt { get; set; }
 
     public IList<Gate> Gates { get; private set; } = new List<Gate>();
     public IList<Flight> Flights { get; private set; } = new List<Flight>();

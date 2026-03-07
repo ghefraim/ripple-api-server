@@ -77,8 +77,8 @@ public class CreateDisruptionCommandHandler(
         _context.Disruptions.Add(disruption);
         await _context.SaveChangesAsync(cancellationToken);
 
-        // Fire-and-forget: cascade + LLM + SignalR run in background
-        _ = _publisher.Publish(new DisruptionCreatedNotification(disruption.Id, organizationId), CancellationToken.None);
+        // Run cascade engine, action plan generation, and SignalR notifications
+        await _publisher.Publish(new DisruptionCreatedNotification(disruption.Id, organizationId), cancellationToken);
 
         return new CreateDisruptionResponse(
             disruption.Id,
