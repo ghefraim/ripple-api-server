@@ -58,11 +58,12 @@ public class CascadeEngine : ICascadeEngine
         await _context.CascadeImpacts.AddRangeAsync(impacts, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
 
-        var ruleRecommendations = await ExecuteRulesAsync(flight, disruption, impacts, cancellationToken);
+        var notificationTargets = new List<string>();
+        var ruleRecommendations = await ExecuteRulesAsync(flight, disruption, impacts, notificationTargets, cancellationToken);
 
         var context = await BuildCascadeContextAsync(flight, disruption, impacts, ruleRecommendations, cancellationToken);
 
-        return new CascadeResult(impacts, context);
+        return new CascadeResult(impacts, context, notificationTargets);
     }
 
     private void ApplyDirectImpact(Flight flight, Disruption disruption)
@@ -437,7 +438,7 @@ public class CascadeEngine : ICascadeEngine
     }
 
     private async Task<List<string>> ExecuteRulesAsync(
-        Flight flight, Disruption disruption, List<CascadeImpact> impacts, CancellationToken cancellationToken)
+        Flight flight, Disruption disruption, List<CascadeImpact> impacts, List<string> notificationTargets, CancellationToken cancellationToken)
     {
         var recommendations = new List<string>();
 
@@ -486,7 +487,7 @@ public class CascadeEngine : ICascadeEngine
                     var actionType = action.GetProperty("type").GetString()!;
                     var actionValue = action.GetProperty("value").GetString()!;
 
-                    ExecuteRuleAction(actionType, actionValue, rule.Name, impacts, recommendations);
+                    ExecuteRuleAction(actionType, actionValue, rule.Name, impacts, recommendations, notificationTargets);
                 }
             }
             catch (JsonException ex)
@@ -610,7 +611,7 @@ public class CascadeEngine : ICascadeEngine
     }
 
     private void ExecuteRuleAction(string actionType, string actionValue, string ruleName,
-        List<CascadeImpact> impacts, List<string> recommendations)
+        List<CascadeImpact> impacts, List<string> recommendations, List<string> notificationTargets)
     {
         switch (actionType)
         {
@@ -635,8 +636,10 @@ public class CascadeEngine : ICascadeEngine
                 break;
 
             case "auto_notify":
+                if (!notificationTargets.Contains(actionValue, StringComparer.OrdinalIgnoreCase))
+                    notificationTargets.Add(actionValue);
                 recommendations.Add($"[Rule: {ruleName}] AUTO_NOTIFY: {actionValue}");
-                _logger.LogInformation("Rule '{Rule}' queued notification for: {Target}", ruleName, actionValue);
+                _logger.LogInformation("Rule '{Rule}' queued notification for group: {Target}", ruleName, actionValue);
                 break;
 
             default:

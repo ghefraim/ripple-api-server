@@ -19,4 +19,5 @@ public class GroundCrew : AuditableEntity, IOrganizationScoped
 
     public AirportConfig? Airport { get; set; }
     public IList<Flight> AssignedFlights { get; private set; } = new List<Flight>();
+    public IList<CrewContact> Contacts { get; private set; } = new List<CrewContact>();
 }

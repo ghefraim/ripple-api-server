@@ -58,6 +58,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
     public DbSet<OperationalRule> OperationalRules => Set<OperationalRule>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<AirportConfig> AirportConfigs => Set<AirportConfig>();
+    public DbSet<CrewContact> CrewContacts => Set<CrewContact>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

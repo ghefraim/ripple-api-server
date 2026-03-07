@@ -14,6 +14,7 @@ public class DisruptionCreatedHandler : INotificationHandler<DisruptionCreatedNo
     private readonly ICascadeEngine _cascadeEngine;
     private readonly IActionPlanGenerator _actionPlanGenerator;
     private readonly IOperationsNotifier _notifier;
+    private readonly ITelegramNotifier _telegramNotifier;
     private readonly ILogger<DisruptionCreatedHandler> _logger;
 
     public DisruptionCreatedHandler(
@@ -21,12 +22,14 @@ public class DisruptionCreatedHandler : INotificationHandler<DisruptionCreatedNo
         ICascadeEngine cascadeEngine,
         IActionPlanGenerator actionPlanGenerator,
         IOperationsNotifier notifier,
+        ITelegramNotifier telegramNotifier,
         ILogger<DisruptionCreatedHandler> logger)
     {
         _context = context;
         _cascadeEngine = cascadeEngine;
         _actionPlanGenerator = actionPlanGenerator;
         _notifier = notifier;
+        _telegramNotifier = telegramNotifier;
         _logger = logger;
     }
 
@@ -112,6 +115,37 @@ public class DisruptionCreatedHandler : INotificationHandler<DisruptionCreatedNo
         catch (Exception ex)
         {
             _logger.LogError(ex, "Action plan generation failed for disruption {DisruptionId}", disruption.Id);
+        }
+
+        // 6. Send Telegram notifications to employee groups targeted by rules
+        if (cascadeResult.NotificationTargets.Count > 0 && _telegramNotifier.IsConfigured)
+        {
+            var severityEmoji = cascadeResult.Impacts.Any(i => i.Severity == Domain.Enums.Severity.Critical)
+                ? "\u26a0\ufe0f" : "\u2139\ufe0f";
+
+            var impactSummary = cascadeResult.Impacts.Count > 0
+                ? string.Join("\n", impactDtos.Select(i => $"  - {i.AffectedFlightNumber}: {i.ImpactType} ({i.Severity})"))
+                : "  No cascade impacts detected";
+
+            var telegramMessage =
+                $"{severityEmoji} <b>DISRUPTION ALERT</b>\n" +
+                $"Flight <b>{disruption.Flight.FlightNumber}</b> - {disruption.Type}\n" +
+                $"Details: {disruption.DetailsJson}\n\n" +
+                $"<b>Cascade Impacts:</b>\n{impactSummary}";
+
+            foreach (var groupName in cascadeResult.NotificationTargets)
+            {
+                try
+                {
+                    await _telegramNotifier.SendToGroupAsync(groupName, orgId, telegramMessage, cancellationToken);
+                    _logger.LogInformation("Telegram notification sent to group '{Group}' for disruption {DisruptionId}",
+                        groupName, disruption.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send Telegram notification to group '{Group}'", groupName);
+                }
+            }
         }
     }
 }

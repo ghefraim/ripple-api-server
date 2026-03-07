@@ -1,7 +1,10 @@
+using Application.Features.Crew.AddCrewContact;
 using Application.Features.Crew.CreateCrew;
 using Application.Features.Crew.DeleteCrew;
+using Application.Features.Crew.DeleteCrewContact;
 using Application.Features.Crew.GetCrewById;
 using Application.Features.Crew.GetCrews;
+using Application.Features.Crew.ImportCrewContacts;
 using Application.Features.Crew.ImportCrews;
 using Application.Features.Crew.UpdateCrew;
 using Microsoft.AspNetCore.Authorization;
@@ -53,6 +56,27 @@ public class CrewController : ApiControllerBase
     {
         var command = new ImportCrewsCommand(file);
         var result = await Mediator.Send(command);
+        return Ok(result);
+    }
+
+    [HttpPost("{crewId:guid}/contacts")]
+    public async Task<IActionResult> AddContact(Guid crewId, [FromBody] AddCrewContactCommand command)
+    {
+        var result = await Mediator.Send(command with { CrewId = crewId });
+        return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
+    }
+
+    [HttpDelete("contacts/{contactId:guid}")]
+    public async Task<IActionResult> DeleteContact(Guid contactId)
+    {
+        await Mediator.Send(new DeleteCrewContactCommand(contactId));
+        return NoContent();
+    }
+
+    [HttpPost("{crewId:guid}/contacts/import")]
+    public async Task<IActionResult> ImportContacts(Guid crewId, [FromForm] IFormFile file)
+    {
+        var result = await Mediator.Send(new ImportCrewContactsCommand(crewId, file));
         return Ok(result);
     }
 }

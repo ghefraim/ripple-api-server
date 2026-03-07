@@ -4,7 +4,8 @@ namespace Application.Common.Interfaces;
 
 public record CascadeResult(
     List<CascadeImpact> Impacts,
-    CascadeContext Context
+    CascadeContext Context,
+    List<string> NotificationTargets
 );
 
 public interface ICascadeEngine

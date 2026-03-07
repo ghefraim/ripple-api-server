@@ -96,6 +96,7 @@ public static class InfrastructureServiceConfiguration
 
         services.AddScoped<ICascadeEngine, CascadeEngine>();
         services.AddScoped<IActionPlanGenerator, ActionPlanGenerator>();
+        services.AddScoped<ITelegramNotifier, TelegramNotifier>();
 
         var flightDataProvider = configuration.GetValue<string>("FlightDataProvider") ?? "Local";
         if (flightDataProvider == "Local")
@@ -105,6 +106,7 @@ public static class InfrastructureServiceConfiguration
 
         services.AddHttpClient("GeminiLlm");
         services.AddHttpClient("AviationStack");
+        services.AddHttpClient("Telegram");
 
         var llmProvider = configuration.GetValue<string>("LlmProvider") ?? "Gemini";
         if (llmProvider == "Gemini")
