@@ -44,6 +44,10 @@ public class DisruptionCreatedHandler : INotificationHandler<DisruptionCreatedNo
 
         var orgId = notification.OrganizationId;
 
+        var airport = await _context.AirportConfigs
+            .FirstOrDefaultAsync(a => a.OrganizationId == orgId, cancellationToken);
+        var llmEnabled = airport?.LlmEnabled ?? false;
+
         // 1. Broadcast DisruptionReported immediately
         await _notifier.NotifyDisruptionReported(orgId, new DisruptionReportedEvent(
             disruption.Id,
@@ -93,7 +97,7 @@ public class DisruptionCreatedHandler : INotificationHandler<DisruptionCreatedNo
         // 4. Generate LLM action plan
         try
         {
-            var actionPlan = await _actionPlanGenerator.GenerateAsync(disruption, cascadeResult, cancellationToken);
+            var actionPlan = await _actionPlanGenerator.GenerateAsync(disruption, cascadeResult, llmEnabled, cancellationToken);
 
             // 5. Broadcast ActionPlanGenerated
             await _notifier.NotifyActionPlanGenerated(orgId, new ActionPlanGeneratedEvent(

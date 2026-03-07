@@ -16,7 +16,8 @@ public record AirportIntegrationResponse(
     string Name,
     FlightDataSource FlightDataSource,
     string? FlightDataSourceConfigJson,
-    DateTime? LastSyncedAt
+    DateTime? LastSyncedAt,
+    bool LlmEnabled
 );
 
 public class GetAirportIntegrationQueryHandler(
@@ -41,7 +42,8 @@ public class GetAirportIntegrationQueryHandler(
             airport.Name,
             airport.FlightDataSource,
             airport.FlightDataSourceConfigJson,
-            airport.LastSyncedAt
+            airport.LastSyncedAt,
+            airport.LlmEnabled
         );
     }
 }

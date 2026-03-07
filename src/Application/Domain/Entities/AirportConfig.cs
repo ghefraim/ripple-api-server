@@ -21,6 +21,8 @@ public class AirportConfig : AuditableEntity, IOrganizationScoped
     public string? FlightDataSourceConfigJson { get; set; }
     public DateTime? LastSyncedAt { get; set; }
 
+    public bool LlmEnabled { get; set; }
+
     public IList<Gate> Gates { get; private set; } = new List<Gate>();
     public IList<Flight> Flights { get; private set; } = new List<Flight>();
     public IList<GroundCrew> GroundCrews { get; private set; } = new List<GroundCrew>();

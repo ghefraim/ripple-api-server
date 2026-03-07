@@ -26,10 +26,7 @@ public class GatesController : ApiControllerBase
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateGateCommand command)
     {
-        if (id != command.Id)
-            return BadRequest("Route id does not match command id.");
-
-        var result = await Mediator.Send(command);
+        var result = await Mediator.Send(command with { Id = id });
         return Ok(result);
     }
 

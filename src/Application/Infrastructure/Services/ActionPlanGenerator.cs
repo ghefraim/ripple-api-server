@@ -32,11 +32,16 @@ public class ActionPlanGenerator : IActionPlanGenerator
         _logger = logger;
     }
 
-    public async Task<ActionPlan> GenerateAsync(Disruption disruption, CascadeResult cascadeResult, CancellationToken cancellationToken = default)
+    public async Task<ActionPlan> GenerateAsync(Disruption disruption, CascadeResult cascadeResult, bool useLlm = true, CancellationToken cancellationToken = default)
     {
         ActionPlanResult result;
 
-        try
+        if (!useLlm)
+        {
+            _logger.LogInformation("LLM disabled for disruption {DisruptionId}, generating fallback action plan", disruption.Id);
+            result = GenerateFallbackPlan(cascadeResult);
+        }
+        else try
         {
             result = await _llmProvider.GenerateActionPlanAsync(cascadeResult.Context, cancellationToken);
 

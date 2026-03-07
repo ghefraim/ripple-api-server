@@ -11,13 +11,15 @@ namespace Application.Features.AirportIntegration.Commands;
 [Authorize(Roles = "Owner")]
 public record UpdateAirportIntegrationCommand(
     FlightDataSource FlightDataSource,
-    string? ApiKey
+    string? ApiKey,
+    bool? LlmEnabled
 ) : IRequest<UpdateAirportIntegrationResponse>;
 
 public record UpdateAirportIntegrationResponse(
     FlightDataSource FlightDataSource,
     string? FlightDataSourceConfigJson,
-    DateTime? LastSyncedAt
+    DateTime? LastSyncedAt,
+    bool LlmEnabled
 );
 
 public class UpdateAirportIntegrationCommandValidator : AbstractValidator<UpdateAirportIntegrationCommand>
@@ -60,12 +62,18 @@ public class UpdateAirportIntegrationCommandHandler(
             // Keep existing config but don't require it
         }
 
+        if (request.LlmEnabled.HasValue)
+        {
+            airport.LlmEnabled = request.LlmEnabled.Value;
+        }
+
         await _context.SaveChangesAsync(cancellationToken);
 
         return new UpdateAirportIntegrationResponse(
             airport.FlightDataSource,
             airport.FlightDataSourceConfigJson,
-            airport.LastSyncedAt
+            airport.LastSyncedAt,
+            airport.LlmEnabled
         );
     }
 }
