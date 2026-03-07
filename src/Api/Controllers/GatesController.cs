@@ -1,6 +1,7 @@
 using Application.Features.Gates.CreateGate;
 using Application.Features.Gates.DeleteGate;
 using Application.Features.Gates.GetGates;
+using Application.Features.Gates.ImportGates;
 using Application.Features.Gates.UpdateGate;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -35,5 +36,13 @@ public class GatesController : ApiControllerBase
     {
         await Mediator.Send(new DeleteGateCommand(id));
         return NoContent();
+    }
+
+    [HttpPost("import")]
+    public async Task<IActionResult> Import([FromForm] IFormFile file)
+    {
+        var command = new ImportGatesCommand(file);
+        var result = await Mediator.Send(command);
+        return Ok(result);
     }
 }

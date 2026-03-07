@@ -13,6 +13,7 @@
     <PackageReference Include="Azure.Storage.Blobs" />
     <PackageReference Include="BCrypt.Net-Next" />
     <PackageReference Include="CsvHelper" />
+    <PackageReference Include="EPPlus" />
     <PackageReference Include="ErrorOr" />
     <PackageReference Include="FluentValidation" />
     <PackageReference Include="FluentValidation.AspNetCore" />

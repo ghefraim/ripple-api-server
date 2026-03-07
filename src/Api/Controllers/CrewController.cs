@@ -2,6 +2,7 @@ using Application.Features.Crew.CreateCrew;
 using Application.Features.Crew.DeleteCrew;
 using Application.Features.Crew.GetCrewById;
 using Application.Features.Crew.GetCrews;
+using Application.Features.Crew.ImportCrews;
 using Application.Features.Crew.UpdateCrew;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -45,5 +46,13 @@ public class CrewController : ApiControllerBase
     {
         await Mediator.Send(new DeleteCrewCommand(id));
         return NoContent();
+    }
+
+    [HttpPost("import")]
+    public async Task<IActionResult> Import([FromForm] IFormFile file)
+    {
+        var command = new ImportCrewsCommand(file);
+        var result = await Mediator.Send(command);
+        return Ok(result);
     }
 }
