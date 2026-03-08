@@ -388,14 +388,17 @@ public class CascadeEngine : ICascadeEngine
 
         var gates = await _context.Gates
             .Where(g => g.AirportId == flight.AirportId && g.IsActive)
+            .Include(g => g.Flights.Where(f => !f.IsDeleted && f.ScheduledTime >= today && f.ScheduledTime < tomorrow))
             .ToListAsync(cancellationToken);
 
         var crews = await _context.GroundCrews
             .Where(c => c.AirportId == flight.AirportId)
+            .Include(c => c.AssignedFlights.Where(f => !f.IsDeleted && f.ScheduledTime >= today && f.ScheduledTime < tomorrow))
             .ToListAsync(cancellationToken);
 
         var affectedFlightIds = impacts.Select(i => i.AffectedFlightId).ToHashSet();
         var affectedFlights = await _context.Flights
+            .Include(f => f.Gate)
             .Where(f => affectedFlightIds.Contains(f.Id))
             .ToDictionaryAsync(f => f.Id, cancellationToken);
 
@@ -414,18 +417,36 @@ public class CascadeEngine : ICascadeEngine
             flight.Crew?.Name,
             flight.TurnaroundPairId);
 
-        var contextImpacts = impacts.Select(i => new CascadeContextImpact(
-            i.AffectedFlightId,
-            affectedFlights.TryGetValue(i.AffectedFlightId, out var af) ? af.FlightNumber : "Unknown",
-            i.ImpactType,
-            i.Severity,
-            i.Details)).ToList();
+        var contextImpacts = impacts.Select(i =>
+        {
+            affectedFlights.TryGetValue(i.AffectedFlightId, out var af);
+            return new CascadeContextImpact(
+                i.AffectedFlightId,
+                af?.FlightNumber ?? "Unknown",
+                i.ImpactType,
+                i.Severity,
+                i.Details,
+                af?.ScheduledTime,
+                af?.EstimatedTime,
+                af?.Gate?.Code);
+        }).ToList();
 
+        var slotBuffer = TimeSpan.FromMinutes(_gateBufferMinutes);
         var contextGates = gates.Select(g => new CascadeContextGate(
-            g.Id, g.Code, g.GateType, g.SizeCategory, g.IsActive)).ToList();
+            g.Id, g.Code, g.GateType, g.SizeCategory, g.IsActive,
+            g.Flights.Where(f => !f.IsDeleted).Select(f =>
+            {
+                var t = f.EstimatedTime ?? f.ScheduledTime;
+                return new CascadeContextTimeSlot(t - slotBuffer, t + slotBuffer);
+            }).ToList())).ToList();
 
         var contextCrews = crews.Select(c => new CascadeContextCrew(
-            c.Id, c.Name, c.ShiftStart, c.ShiftEnd, c.Status)).ToList();
+            c.Id, c.Name, c.ShiftStart, c.ShiftEnd, c.Status,
+            c.AssignedFlights.Where(f => !f.IsDeleted).Select(f =>
+            {
+                var t = f.EstimatedTime ?? f.ScheduledTime;
+                return new CascadeContextTimeSlot(t - slotBuffer, t + slotBuffer);
+            }).ToList())).ToList();
 
         return new CascadeContext(
             disruptedFlight,

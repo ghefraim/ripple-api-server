@@ -30,8 +30,8 @@ public class UpdateAirportIntegrationCommandValidator : AbstractValidator<Update
             .IsInEnum().WithMessage("Invalid flight data source.");
 
         RuleFor(x => x.ApiKey)
-            .NotEmpty().When(x => x.FlightDataSource == FlightDataSource.AviationApi)
-            .WithMessage("API key is required for Aviation API integration.");
+            .MaximumLength(500).When(x => x.ApiKey != null)
+            .WithMessage("API key is too long.");
     }
 }
 
@@ -55,7 +55,17 @@ public class UpdateAirportIntegrationCommandHandler(
 
         if (request.FlightDataSource == FlightDataSource.AviationApi)
         {
-            airport.FlightDataSourceConfigJson = System.Text.Json.JsonSerializer.Serialize(new { apiKey = request.ApiKey });
+            if (!string.IsNullOrWhiteSpace(request.ApiKey))
+            {
+                airport.FlightDataSourceConfigJson = System.Text.Json.JsonSerializer.Serialize(new { apiKey = request.ApiKey });
+            }
+            else if (string.IsNullOrWhiteSpace(airport.FlightDataSourceConfigJson))
+            {
+                throw new FluentValidation.ValidationException(new[]
+                {
+                    new FluentValidation.Results.ValidationFailure("ApiKey", "API key is required for Aviation API integration.")
+                });
+            }
         }
         else if (request.FlightDataSource == FlightDataSource.Manual)
         {

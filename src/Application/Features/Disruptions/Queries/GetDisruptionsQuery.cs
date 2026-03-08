@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Application.Features.Disruptions.GetDisruptions;
 
 [Authorize]
-public record GetDisruptionsQuery(DateTime? Date = null) : IRequest<List<DisruptionSummaryResponse>>;
+public record GetDisruptionsQuery(DateTime? Date = null, bool IncludeArchived = false) : IRequest<List<DisruptionSummaryResponse>>;
 
 public record DisruptionSummaryResponse(
     Guid Id,
@@ -33,10 +33,15 @@ public class GetDisruptionsQueryHandler(
         var today = request.Date?.Date ?? DateTime.UtcNow.Date;
         var tomorrow = today.AddDays(1);
 
-        var disruptions = await _context.Disruptions
+        var query = _context.Disruptions
             .Include(d => d.Flight)
             .Include(d => d.CascadeImpacts)
-            .Where(d => d.ReportedAt >= today && d.ReportedAt < tomorrow)
+            .Where(d => d.ReportedAt >= today && d.ReportedAt < tomorrow);
+
+        if (!request.IncludeArchived)
+            query = query.Where(d => d.Status != DisruptionStatus.Archived);
+
+        var disruptions = await query
             .OrderByDescending(d => d.ReportedAt)
             .ToListAsync(cancellationToken);
 

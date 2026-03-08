@@ -4,6 +4,7 @@ using Application.Features.Flights.ExportFlights;
 using Application.Features.Flights.GetFlightById;
 using Application.Features.Flights.GetFlights;
 using Application.Features.Flights.ImportFlights;
+using Application.Features.Flights.ReassignFlight;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -37,6 +38,10 @@ public class FlightsController(ICsvFileBuilder csvFileBuilder) : ApiControllerBa
         var result = await Mediator.Send(command);
         return Ok(result);
     }
+
+    [HttpPut("{id:guid}/reassign")]
+    public async Task<IActionResult> Reassign(Guid id, [FromBody] ReassignFlightRequest request)
+        => Ok(await Mediator.Send(new ReassignFlightCommand(id, request.GateId, request.CrewId)));
 
     [HttpGet("export")]
     public async Task<IActionResult> Export([FromQuery] FlightStatus? status)

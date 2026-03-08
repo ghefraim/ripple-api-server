@@ -89,7 +89,7 @@ public class ActionPlanGenerator : IActionPlanGenerator
 
         foreach (var impact in sortedImpacts)
         {
-            var (description, reasoning) = BuildFallbackAction(impact, context);
+            var (description, reasoning, actionData) = BuildSmartAction(impact, context);
             var currentPriority = priority++;
 
             actions.Add(new ActionPlanAction(
@@ -100,7 +100,8 @@ public class ActionPlanGenerator : IActionPlanGenerator
                 ExecutionType: "sequential",
                 DependsOn: currentPriority > 1 ? new List<int> { currentPriority - 1 } : new List<int>(),
                 TimeTarget: GetTimeTarget(impact.Severity),
-                Status: "pending"
+                Status: "pending",
+                ActionData: actionData
             ));
         }
 
@@ -139,31 +140,84 @@ public class ActionPlanGenerator : IActionPlanGenerator
         return new ActionPlanResult(rawText, actions);
     }
 
-    private static (string Description, string Reasoning) BuildFallbackAction(CascadeContextImpact impact, CascadeContext context)
+    private static (string Description, string Reasoning, ActionData? ActionData) BuildSmartAction(CascadeContextImpact impact, CascadeContext context)
     {
-        return impact.ImpactType switch
+        var flightTime = impact.AffectedFlightEstimatedTime ?? impact.AffectedFlightScheduledTime;
+
+        switch (impact.ImpactType)
         {
-            CascadeImpactType.GateConflict => (
-                $"Resolve gate conflict for flight {impact.AffectedFlightNumber} — consider reassigning to an available gate",
-                $"[{impact.Severity}] Gate conflict detected: {impact.Details}"
-            ),
-            CascadeImpactType.TurnaroundBreach => (
-                $"Address turnaround breach for flight {impact.AffectedFlightNumber} — evaluate gate reassignment or departure delay",
-                $"[{impact.Severity}] Turnaround time violation: {impact.Details}"
-            ),
-            CascadeImpactType.CrewGap => (
-                $"Resolve crew gap for flight {impact.AffectedFlightNumber} — reassign available crew",
-                $"[{impact.Severity}] Crew scheduling conflict: {impact.Details}"
-            ),
-            CascadeImpactType.DownstreamDelay => (
-                $"Monitor downstream delay for flight {impact.AffectedFlightNumber}",
-                $"[{impact.Severity}] Downstream delay impact: {impact.Details}"
-            ),
-            _ => (
-                $"Review impact on flight {impact.AffectedFlightNumber}",
-                $"[{impact.Severity}] {impact.ImpactType}: {impact.Details}"
-            )
-        };
+            case CascadeImpactType.GateConflict:
+            case CascadeImpactType.TurnaroundBreach:
+            {
+                var bestGate = FindAvailableGate(context.AvailableGates, flightTime, impact.CurrentGateCode);
+                if (bestGate != null)
+                {
+                    var label = impact.ImpactType == CascadeImpactType.TurnaroundBreach ? " for turnaround" : "";
+                    return (
+                        $"Reassign {impact.AffectedFlightNumber} to Gate {bestGate.Code}{label}",
+                        $"[{impact.Severity}] {(impact.ImpactType == CascadeImpactType.GateConflict ? "Gate conflict" : "Turnaround violation")}: {impact.Details}",
+                        new ActionData("gate_reassign", impact.AffectedFlightId, impact.AffectedFlightNumber, bestGate.Id, bestGate.Code)
+                    );
+                }
+                return (
+                    $"Resolve {(impact.ImpactType == CascadeImpactType.GateConflict ? "gate conflict" : "turnaround breach")} for {impact.AffectedFlightNumber} — no free gates",
+                    $"[{impact.Severity}] {impact.Details}",
+                    new ActionData("notify", impact.AffectedFlightId, impact.AffectedFlightNumber)
+                );
+            }
+            case CascadeImpactType.CrewGap:
+            {
+                var bestCrew = FindAvailableCrew(context.AvailableCrews, flightTime);
+                if (bestCrew != null)
+                {
+                    return (
+                        $"Assign crew {bestCrew.Name} to handle {impact.AffectedFlightNumber}",
+                        $"[{impact.Severity}] Crew scheduling conflict: {impact.Details}",
+                        new ActionData("crew_reassign", impact.AffectedFlightId, impact.AffectedFlightNumber, TargetCrewId: bestCrew.Id, TargetCrewName: bestCrew.Name)
+                    );
+                }
+                return (
+                    $"Resolve crew gap for {impact.AffectedFlightNumber} — no crews available",
+                    $"[{impact.Severity}] Crew scheduling conflict: {impact.Details}",
+                    new ActionData("notify", impact.AffectedFlightId, impact.AffectedFlightNumber)
+                );
+            }
+            case CascadeImpactType.DownstreamDelay:
+                return (
+                    $"Monitor downstream delay on {impact.AffectedFlightNumber}",
+                    $"[{impact.Severity}] Downstream delay impact: {impact.Details}",
+                    new ActionData("monitor", impact.AffectedFlightId, impact.AffectedFlightNumber)
+                );
+            default:
+                return (
+                    $"Review impact on {impact.AffectedFlightNumber}",
+                    $"[{impact.Severity}] {impact.ImpactType}: {impact.Details}",
+                    new ActionData("notify", impact.AffectedFlightId, impact.AffectedFlightNumber)
+                );
+        }
+    }
+
+    private static CascadeContextGate? FindAvailableGate(List<CascadeContextGate> gates, DateTime? flightTime, string? currentGateCode)
+    {
+        return gates.FirstOrDefault(g =>
+            g.IsActive
+            && g.Code != currentGateCode
+            && (flightTime == null || !g.OccupiedSlots.Any(s => flightTime.Value >= s.Start && flightTime.Value < s.End)));
+    }
+
+    private static CascadeContextCrew? FindAvailableCrew(List<CascadeContextCrew> crews, DateTime? flightTime)
+    {
+        return crews.FirstOrDefault(c =>
+            c.Status == CrewStatus.Available
+            && (flightTime == null || IsInShift(TimeOnly.FromDateTime(flightTime.Value), c.ShiftStart, c.ShiftEnd))
+            && (flightTime == null || !c.OccupiedSlots.Any(s => flightTime.Value >= s.Start && flightTime.Value < s.End)));
+    }
+
+    private static bool IsInShift(TimeOnly time, TimeOnly shiftStart, TimeOnly shiftEnd)
+    {
+        return shiftEnd > shiftStart
+            ? time >= shiftStart && time <= shiftEnd
+            : time >= shiftStart || time <= shiftEnd;
     }
 
     private static string? GetSuggestedAssignee(CascadeImpactType impactType)
