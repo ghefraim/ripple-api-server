@@ -7,6 +7,7 @@ public interface IOperationsHubClient
     Task DisruptionReported(DisruptionReportedEvent data);
     Task CascadeComputed(CascadeComputedEvent data);
     Task ActionPlanGenerated(ActionPlanGeneratedEvent data);
+    Task ActionPlanUpdated(ActionPlanUpdatedEvent data);
 }
 
 public record DisruptionReportedEvent(
@@ -35,3 +36,8 @@ public record ActionPlanGeneratedEvent(
     string LlmOutputText,
     string ActionsJson,
     DateTime GeneratedAt);
+
+public record ActionPlanUpdatedEvent(
+    Guid DisruptionId,
+    Guid ActionPlanId,
+    string ActionsJson);

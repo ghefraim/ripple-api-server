@@ -56,7 +56,11 @@ public record ActionPlanAction(
     int Priority,
     string Description,
     string Reasoning,
-    string? SuggestedAssignee
+    string? SuggestedAssignee,
+    string? ExecutionType = "sequential",
+    List<int>? DependsOn = null,
+    string? TimeTarget = null,
+    string? Status = "pending"
 );
 
 public record ActionPlanResult(

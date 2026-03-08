@@ -23,4 +23,7 @@ public class OperationsNotifier : IOperationsNotifier
 
     public Task NotifyActionPlanGenerated(Guid organizationId, ActionPlanGeneratedEvent data)
         => _hubContext.Clients.Group(organizationId.ToString()).ActionPlanGenerated(data);
+
+    public Task NotifyActionPlanUpdated(Guid organizationId, ActionPlanUpdatedEvent data)
+        => _hubContext.Clients.Group(organizationId.ToString()).ActionPlanUpdated(data);
 }

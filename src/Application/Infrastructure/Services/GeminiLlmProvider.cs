@@ -74,6 +74,7 @@ public class GeminiLlmProvider : ILlmProvider
         var sb = new StringBuilder();
         sb.AppendLine("You are an airport operations advisor. A disruption has been reported and cascade impacts have been computed.");
         sb.AppendLine("Generate a prioritized action plan. Be professional and concise.");
+        sb.AppendLine("Be EXTREMELY concise. Each action description must be max 15 words in imperative mood (e.g., \"Reassign W6-2902 to gate B1\"). Each reasoning must be max 1 sentence.");
         sb.AppendLine();
         sb.AppendLine("## Disruption");
         sb.AppendLine($"- Flight: {context.DisruptedFlight.FlightNumber} ({context.DisruptedFlight.Airline})");
@@ -134,13 +135,17 @@ public class GeminiLlmProvider : ILlmProvider
         sb.AppendLine("## Required Output Format");
         sb.AppendLine("Respond ONLY with a JSON array of actions. Each action object must have:");
         sb.AppendLine("- \"priority\" (integer, 1 = most urgent)");
-        sb.AppendLine("- \"description\" (string, what to do)");
-        sb.AppendLine("- \"reasoning\" (string, why)");
+        sb.AppendLine("- \"description\" (string, what to do — max 15 words, imperative mood)");
+        sb.AppendLine("- \"reasoning\" (string, why — max 1 sentence)");
         sb.AppendLine("- \"suggestedAssignee\" (string or null, who should do it)");
+        sb.AppendLine("- \"executionType\" (string: \"parallel\" if can run simultaneously with other actions, \"sequential\" if must wait)");
+        sb.AppendLine("- \"dependsOn\" (array of priority numbers this action depends on, empty array [] if independent)");
+        sb.AppendLine("- \"timeTarget\" (string: \"Immediate\", \"Within 15 min\", or \"Before departure\")");
+        sb.AppendLine("- \"status\" (string: always \"pending\" for new plans)");
         sb.AppendLine();
         sb.AppendLine("Example:");
         sb.AppendLine("```json");
-        sb.AppendLine("[{\"priority\":1,\"description\":\"Reassign W6-2902 to gate B1\",\"reasoning\":\"Gate A3 has a conflict due to delayed arrival\",\"suggestedAssignee\":\"Gate Operations\"}]");
+        sb.AppendLine("[{\"priority\":1,\"description\":\"Reassign W6-2902 to gate B1\",\"reasoning\":\"Gate A3 conflict from delayed arrival\",\"suggestedAssignee\":\"Gate Operations\",\"executionType\":\"parallel\",\"dependsOn\":[],\"timeTarget\":\"Immediate\",\"status\":\"pending\"},{\"priority\":2,\"description\":\"Notify W6-2902 crew of gate change\",\"reasoning\":\"Crew must relocate to new gate\",\"suggestedAssignee\":\"Crew Coordinator\",\"executionType\":\"sequential\",\"dependsOn\":[1],\"timeTarget\":\"Within 15 min\",\"status\":\"pending\"}]");
         sb.AppendLine("```");
 
         return sb.ToString();

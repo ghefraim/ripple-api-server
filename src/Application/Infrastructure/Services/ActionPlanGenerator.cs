@@ -90,23 +90,34 @@ public class ActionPlanGenerator : IActionPlanGenerator
         foreach (var impact in sortedImpacts)
         {
             var (description, reasoning) = BuildFallbackAction(impact, context);
+            var currentPriority = priority++;
 
             actions.Add(new ActionPlanAction(
-                Priority: priority++,
+                Priority: currentPriority,
                 Description: description,
                 Reasoning: reasoning,
-                SuggestedAssignee: GetSuggestedAssignee(impact.ImpactType)
+                SuggestedAssignee: GetSuggestedAssignee(impact.ImpactType),
+                ExecutionType: "sequential",
+                DependsOn: currentPriority > 1 ? new List<int> { currentPriority - 1 } : new List<int>(),
+                TimeTarget: GetTimeTarget(impact.Severity),
+                Status: "pending"
             ));
         }
 
         // Add rule recommendations as additional actions
         foreach (var rec in context.RuleRecommendations)
         {
+            var currentPriority = priority++;
+
             actions.Add(new ActionPlanAction(
-                Priority: priority++,
+                Priority: currentPriority,
                 Description: rec,
                 Reasoning: "Triggered by operational rule",
-                SuggestedAssignee: null
+                SuggestedAssignee: null,
+                ExecutionType: "sequential",
+                DependsOn: currentPriority > 1 ? new List<int> { currentPriority - 1 } : new List<int>(),
+                TimeTarget: "Within 15 min",
+                Status: "pending"
             ));
         }
 
@@ -116,7 +127,11 @@ public class ActionPlanGenerator : IActionPlanGenerator
                 Priority: 1,
                 Description: "Monitor situation — no immediate cascade impacts detected",
                 Reasoning: $"Disruption reported on flight {context.DisruptedFlight.FlightNumber} but no downstream impacts were identified",
-                SuggestedAssignee: "Duty Manager"
+                SuggestedAssignee: "Duty Manager",
+                ExecutionType: "sequential",
+                DependsOn: new List<int>(),
+                TimeTarget: "Within 15 min",
+                Status: "pending"
             ));
         }
 
@@ -160,6 +175,17 @@ public class ActionPlanGenerator : IActionPlanGenerator
             CascadeImpactType.CrewGap => "Crew Coordinator",
             CascadeImpactType.DownstreamDelay => "Duty Manager",
             _ => "Duty Manager"
+        };
+    }
+
+    private static string GetTimeTarget(Severity severity)
+    {
+        return severity switch
+        {
+            Severity.Critical => "Immediate",
+            Severity.Warning => "Within 15 min",
+            Severity.Info => "Before departure",
+            _ => "Within 15 min"
         };
     }
 

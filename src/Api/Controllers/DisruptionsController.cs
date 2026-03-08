@@ -1,3 +1,4 @@
+using Application.Features.Disruptions.Commands;
 using Application.Features.Disruptions.CreateDisruption;
 using Application.Features.Disruptions.GetDisruptionById;
 using Application.Features.Disruptions.GetDisruptions;
@@ -28,6 +29,13 @@ public class DisruptionsController : ApiControllerBase
     public async Task<IActionResult> GetAll([FromQuery] DateTime? date)
     {
         var result = await Mediator.Send(new GetDisruptionsQuery(date));
+        return Ok(result);
+    }
+
+    [HttpPut("{disruptionId:guid}/action-plan/actions/{actionIndex:int}/status")]
+    public async Task<IActionResult> UpdateActionStatus(Guid disruptionId, int actionIndex, [FromBody] UpdateActionStatusRequest request)
+    {
+        var result = await Mediator.Send(new UpdateActionStatusCommand(disruptionId, actionIndex, request.Status));
         return Ok(result);
     }
 }
