@@ -77,10 +77,12 @@ public class AssignGatesCommandHandler(
         {
             var slots = gate.Flights
                 .Where(f => !f.IsDeleted)
-                .Select(f => (
-                    Start: f.ScheduledTime,
-                    End: (f.EstimatedTime ?? f.ScheduledTime).Add(TurnaroundBuffer)
-                ))
+                .Select(f =>
+                {
+                    var estimated = f.EstimatedTime ?? f.ScheduledTime;
+                    var start = estimated < f.ScheduledTime ? estimated : f.ScheduledTime;
+                    return (Start: start, End: estimated.Add(TurnaroundBuffer));
+                })
                 .ToList();
             gateSchedules[gate.Id] = slots;
         }
@@ -102,8 +104,9 @@ public class AssignGatesCommandHandler(
             if (compatibleGates.Count == 0) continue;
 
             var rrIdx = roundRobinIdx[flight.FlightType];
-            var flightStart = flight.ScheduledTime;
-            var flightEnd = (flight.EstimatedTime ?? flight.ScheduledTime).Add(TurnaroundBuffer);
+            var estimated = flight.EstimatedTime ?? flight.ScheduledTime;
+            var flightStart = estimated < flight.ScheduledTime ? estimated : flight.ScheduledTime;
+            var flightEnd = estimated.Add(TurnaroundBuffer);
 
             Gate? bestGate = null;
 
@@ -157,10 +160,12 @@ public class AssignGatesCommandHandler(
         {
             var slots = crew.AssignedFlights
                 .Where(f => !f.IsDeleted)
-                .Select(f => (
-                    Start: f.ScheduledTime,
-                    End: (f.EstimatedTime ?? f.ScheduledTime).Add(TurnaroundBuffer)
-                ))
+                .Select(f =>
+                {
+                    var est = f.EstimatedTime ?? f.ScheduledTime;
+                    var start = est < f.ScheduledTime ? est : f.ScheduledTime;
+                    return (Start: start, End: est.Add(TurnaroundBuffer));
+                })
                 .ToList();
             crewSchedules[crew.Id] = slots;
         }
@@ -171,8 +176,9 @@ public class AssignGatesCommandHandler(
         foreach (var flight in unassignedFlights)
         {
             var flightTime = TimeOnly.FromDateTime(flight.ScheduledTime);
-            var flightStart = flight.ScheduledTime;
-            var flightEnd = (flight.EstimatedTime ?? flight.ScheduledTime).Add(TurnaroundBuffer);
+            var crewEstimated = flight.EstimatedTime ?? flight.ScheduledTime;
+            var flightStart = crewEstimated < flight.ScheduledTime ? crewEstimated : flight.ScheduledTime;
+            var flightEnd = crewEstimated.Add(TurnaroundBuffer);
 
             GroundCrew? bestCrew = null;
 
