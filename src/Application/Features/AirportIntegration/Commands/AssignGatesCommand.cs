@@ -28,6 +28,7 @@ public class AssignGatesCommandHandler(
     private readonly ILogger<AssignGatesCommandHandler> _logger = logger;
 
     private static readonly TimeSpan TurnaroundBuffer = TimeSpan.FromMinutes(45);
+    private static readonly TimeSpan PairedTurnaroundBuffer = TimeSpan.FromMinutes(15);
 
     public async Task<AssignGatesResponse> Handle(AssignGatesCommand request, CancellationToken cancellationToken)
     {
@@ -71,6 +72,11 @@ public class AssignGatesCommandHandler(
 
         if (unassignedFlights.Count == 0) return 0;
 
+        // Build a lookup of already-assigned flights by ID for turnaround pair resolution
+        var assignedFlightGateLookup = gates
+            .SelectMany(g => g.Flights.Where(f => !f.IsDeleted).Select(f => new { f.Id, GateId = g.Id }))
+            .ToDictionary(x => x.Id, x => x.GateId);
+
         // Track occupied time slots per gate: gate ID -> list of (start, end) tuples
         var gateSchedules = new Dictionary<Guid, List<(DateTime Start, DateTime End)>>();
         foreach (var gate in gates)
@@ -85,9 +91,23 @@ public class AssignGatesCommandHandler(
             gateSchedules[gate.Id] = slots;
         }
 
+        // Group unassigned flights into turnaround pairs and standalone flights
+        var pairedGroups = unassignedFlights
+            .Where(f => f.TurnaroundPairId != null)
+            .GroupBy(f => f.TurnaroundPairId!.Value)
+            .ToList();
+
+        var pairedFlightIds = new HashSet<Guid>(
+            pairedGroups.SelectMany(g => g.Select(f => f.Id)));
+
+        var standaloneFlights = unassignedFlights
+            .Where(f => !pairedFlightIds.Contains(f.Id))
+            .ToList();
+
         // Round-robin index per gate type group
         var domesticGates = gates.Where(g => g.GateType is GateType.Domestic or GateType.Both).ToList();
         var internationalGates = gates.Where(g => g.GateType is GateType.International or GateType.Both).ToList();
+        var gateById = gates.ToDictionary(g => g.Id);
         var roundRobinIdx = new Dictionary<FlightType, int>
         {
             [FlightType.Domestic] = 0,
@@ -96,42 +116,101 @@ public class AssignGatesCommandHandler(
 
         var assigned = 0;
 
-        foreach (var flight in unassignedFlights)
+        // Process turnaround pairs first: arrival then departure on the same gate
+        foreach (var group in pairedGroups)
         {
-            var compatibleGates = flight.FlightType == FlightType.Domestic ? domesticGates : internationalGates;
-            if (compatibleGates.Count == 0) continue;
+            var pairFlights = group.OrderBy(f => f.ScheduledTime).ToList();
+            var arrival = pairFlights.FirstOrDefault(f => f.Direction == FlightDirection.Arrival)
+                          ?? pairFlights.First();
+            var departure = pairFlights.FirstOrDefault(f => f.Direction == FlightDirection.Departure && f.Id != arrival.Id);
 
-            var rrIdx = roundRobinIdx[flight.FlightType];
-            var flightStart = flight.ScheduledTime;
-            var flightEnd = (flight.EstimatedTime ?? flight.ScheduledTime).Add(TurnaroundBuffer);
+            // Check if the turnaround partner is already assigned to a gate (seed data)
+            Guid? forcedGateId = null;
+            if (arrival.TurnaroundPairId.HasValue && assignedFlightGateLookup.TryGetValue(arrival.TurnaroundPairId.Value, out var partnerGateId))
+                forcedGateId = partnerGateId;
+            if (departure != null && departure.TurnaroundPairId.HasValue && !forcedGateId.HasValue
+                && assignedFlightGateLookup.TryGetValue(departure.TurnaroundPairId.Value, out var partnerGateId2))
+                forcedGateId = partnerGateId2;
 
-            Gate? bestGate = null;
+            // Assign the arrival flight
+            var arrivalGate = forcedGateId.HasValue
+                ? AssignToForcedGate(arrival, forcedGateId.Value, gateById, gateSchedules, TurnaroundBuffer)
+                : AssignToAvailableGate(arrival, domesticGates, internationalGates, gateSchedules, roundRobinIdx, TurnaroundBuffer);
 
-            for (var i = 0; i < compatibleGates.Count; i++)
+            if (arrivalGate == null) continue;
+            assigned++;
+
+            // Force-assign the departure to the same gate with reduced buffer
+            if (departure != null)
             {
-                var candidateIdx = (rrIdx + i) % compatibleGates.Count;
-                var candidate = compatibleGates[candidateIdx];
-                var schedule = gateSchedules[candidate.Id];
-
-                var hasConflict = schedule.Any(slot =>
-                    flightStart < slot.End && flightEnd > slot.Start);
-
-                if (!hasConflict)
-                {
-                    bestGate = candidate;
-                    roundRobinIdx[flight.FlightType] = (candidateIdx + 1) % compatibleGates.Count;
-                    break;
-                }
+                var departureAssigned = AssignToForcedGate(departure, arrivalGate.Id, gateById, gateSchedules, PairedTurnaroundBuffer);
+                if (departureAssigned != null)
+                    assigned++;
             }
+        }
 
-            if (bestGate == null) continue;
-
-            flight.GateId = bestGate.Id;
-            gateSchedules[bestGate.Id].Add((flightStart, flightEnd));
+        // Process standalone (unpaired) flights with original 45-min buffer
+        foreach (var flight in standaloneFlights)
+        {
+            var gate = AssignToAvailableGate(flight, domesticGates, internationalGates, gateSchedules, roundRobinIdx, TurnaroundBuffer);
+            if (gate == null) continue;
             assigned++;
         }
 
         return assigned;
+    }
+
+    private static Gate? AssignToForcedGate(
+        Flight flight,
+        Guid gateId,
+        Dictionary<Guid, Gate> gateById,
+        Dictionary<Guid, List<(DateTime Start, DateTime End)>> gateSchedules,
+        TimeSpan buffer)
+    {
+        if (!gateById.TryGetValue(gateId, out var gate)) return null;
+
+        var flightStart = flight.ScheduledTime;
+        var flightEnd = (flight.EstimatedTime ?? flight.ScheduledTime).Add(buffer);
+
+        flight.GateId = gate.Id;
+        gateSchedules[gate.Id].Add((flightStart, flightEnd));
+        return gate;
+    }
+
+    private static Gate? AssignToAvailableGate(
+        Flight flight,
+        List<Gate> domesticGates,
+        List<Gate> internationalGates,
+        Dictionary<Guid, List<(DateTime Start, DateTime End)>> gateSchedules,
+        Dictionary<FlightType, int> roundRobinIdx,
+        TimeSpan buffer)
+    {
+        var compatibleGates = flight.FlightType == FlightType.Domestic ? domesticGates : internationalGates;
+        if (compatibleGates.Count == 0) return null;
+
+        var rrIdx = roundRobinIdx[flight.FlightType];
+        var flightStart = flight.ScheduledTime;
+        var flightEnd = (flight.EstimatedTime ?? flight.ScheduledTime).Add(buffer);
+
+        for (var i = 0; i < compatibleGates.Count; i++)
+        {
+            var candidateIdx = (rrIdx + i) % compatibleGates.Count;
+            var candidate = compatibleGates[candidateIdx];
+            var schedule = gateSchedules[candidate.Id];
+
+            var hasConflict = schedule.Any(slot =>
+                flightStart < slot.End && flightEnd > slot.Start);
+
+            if (!hasConflict)
+            {
+                flight.GateId = candidate.Id;
+                gateSchedules[candidate.Id].Add((flightStart, flightEnd));
+                roundRobinIdx[flight.FlightType] = (candidateIdx + 1) % compatibleGates.Count;
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     private async Task<int> AssignCrews(Guid airportId, CancellationToken cancellationToken)
