@@ -38,6 +38,7 @@ public class TelegramNotifier : ITelegramNotifier
             return;
         }
 
+        // Try exact crew name match first, then case-insensitive/partial match for role-based targets
         var contacts = await _context.CrewContacts
             .Include(c => c.Crew)
             .Where(c => c.Crew.Name == crewName
@@ -45,9 +46,25 @@ public class TelegramNotifier : ITelegramNotifier
                 && c.TelegramChatId.HasValue)
             .ToListAsync(cancellationToken);
 
+        // Fallback: try case-insensitive match (e.g. "duty_manager" -> "Duty Manager")
         if (contacts.Count == 0)
         {
-            _logger.LogWarning("No Telegram-linked contacts found for crew '{Crew}' in org {OrgId}", crewName, organizationId);
+            var normalized = crewName.Replace("_", " ").ToLowerInvariant();
+            contacts = await _context.CrewContacts
+                .Include(c => c.Crew)
+                .Where(c => c.Crew.OrganizationId == organizationId
+                    && c.TelegramChatId.HasValue)
+                .ToListAsync(cancellationToken);
+
+            contacts = contacts
+                .Where(c => c.Crew.Name.Replace("_", " ").ToLowerInvariant().Contains(normalized)
+                    || normalized.Contains(c.Crew.Name.Replace("_", " ").ToLowerInvariant()))
+                .ToList();
+        }
+
+        if (contacts.Count == 0)
+        {
+            _logger.LogDebug("No Telegram-linked contacts found for '{Crew}' in org {OrgId}", crewName, organizationId);
             return;
         }
 
