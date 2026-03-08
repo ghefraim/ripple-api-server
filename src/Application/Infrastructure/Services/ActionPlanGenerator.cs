@@ -81,6 +81,10 @@ public class ActionPlanGenerator : IActionPlanGenerator
         var actions = new List<ActionPlanAction>();
         var priority = 1;
 
+        // Track slots claimed by earlier actions so we don't double-assign
+        var claimedGateSlots = new Dictionary<Guid, List<CascadeContextTimeSlot>>();
+        var claimedCrewSlots = new Dictionary<Guid, List<CascadeContextTimeSlot>>();
+
         // Sort impacts by severity (Critical first) then by type
         var sortedImpacts = context.CascadeImpacts
             .OrderByDescending(i => i.Severity)
@@ -89,7 +93,7 @@ public class ActionPlanGenerator : IActionPlanGenerator
 
         foreach (var impact in sortedImpacts)
         {
-            var (description, reasoning, actionData) = BuildSmartAction(impact, context);
+            var (description, reasoning, actionData) = BuildSmartAction(impact, context, claimedGateSlots, claimedCrewSlots);
             var currentPriority = priority++;
 
             actions.Add(new ActionPlanAction(
@@ -140,18 +144,28 @@ public class ActionPlanGenerator : IActionPlanGenerator
         return new ActionPlanResult(rawText, actions);
     }
 
-    private static (string Description, string Reasoning, ActionData? ActionData) BuildSmartAction(CascadeContextImpact impact, CascadeContext context)
+    private static (string Description, string Reasoning, ActionData? ActionData) BuildSmartAction(
+        CascadeContextImpact impact, CascadeContext context,
+        Dictionary<Guid, List<CascadeContextTimeSlot>> claimedGateSlots,
+        Dictionary<Guid, List<CascadeContextTimeSlot>> claimedCrewSlots)
     {
         var flightTime = impact.AffectedFlightEstimatedTime ?? impact.AffectedFlightScheduledTime;
+        var buffer = TimeSpan.FromMinutes(30);
 
         switch (impact.ImpactType)
         {
             case CascadeImpactType.GateConflict:
             case CascadeImpactType.TurnaroundBreach:
             {
-                var bestGate = FindAvailableGate(context.AvailableGates, flightTime, impact.CurrentGateCode);
-                if (bestGate != null)
+                var bestGate = FindAvailableGate(context.AvailableGates, flightTime, impact.CurrentGateCode, claimedGateSlots);
+                if (bestGate != null && flightTime.HasValue)
                 {
+                    // Claim this slot so subsequent actions won't pick the same gate at the same time
+                    var slot = new CascadeContextTimeSlot(flightTime.Value - buffer, flightTime.Value + buffer);
+                    if (!claimedGateSlots.ContainsKey(bestGate.Id))
+                        claimedGateSlots[bestGate.Id] = new List<CascadeContextTimeSlot>();
+                    claimedGateSlots[bestGate.Id].Add(slot);
+
                     var label = impact.ImpactType == CascadeImpactType.TurnaroundBreach ? " for turnaround" : "";
                     return (
                         $"Reassign {impact.AffectedFlightNumber} to Gate {bestGate.Code}{label}",
@@ -167,9 +181,15 @@ public class ActionPlanGenerator : IActionPlanGenerator
             }
             case CascadeImpactType.CrewGap:
             {
-                var bestCrew = FindAvailableCrew(context.AvailableCrews, flightTime);
-                if (bestCrew != null)
+                var bestCrew = FindAvailableCrew(context.AvailableCrews, flightTime, claimedCrewSlots);
+                if (bestCrew != null && flightTime.HasValue)
                 {
+                    // Claim this slot so subsequent actions won't pick the same crew at the same time
+                    var slot = new CascadeContextTimeSlot(flightTime.Value - buffer, flightTime.Value + buffer);
+                    if (!claimedCrewSlots.ContainsKey(bestCrew.Id))
+                        claimedCrewSlots[bestCrew.Id] = new List<CascadeContextTimeSlot>();
+                    claimedCrewSlots[bestCrew.Id].Add(slot);
+
                     return (
                         $"Assign crew {bestCrew.Name} to handle {impact.AffectedFlightNumber}",
                         $"[{impact.Severity}] Crew scheduling conflict: {impact.Details}",
@@ -197,20 +217,31 @@ public class ActionPlanGenerator : IActionPlanGenerator
         }
     }
 
-    private static CascadeContextGate? FindAvailableGate(List<CascadeContextGate> gates, DateTime? flightTime, string? currentGateCode)
+    private static bool HasTimeConflict(DateTime flightTime, List<CascadeContextTimeSlot> slots)
+    {
+        return slots.Any(s => flightTime >= s.Start && flightTime < s.End);
+    }
+
+    private static CascadeContextGate? FindAvailableGate(
+        List<CascadeContextGate> gates, DateTime? flightTime, string? currentGateCode,
+        Dictionary<Guid, List<CascadeContextTimeSlot>> claimedSlots)
     {
         return gates.FirstOrDefault(g =>
             g.IsActive
             && g.Code != currentGateCode
-            && (flightTime == null || !g.OccupiedSlots.Any(s => flightTime.Value >= s.Start && flightTime.Value < s.End)));
+            && (flightTime == null || !g.OccupiedSlots.Any(s => flightTime.Value >= s.Start && flightTime.Value < s.End))
+            && (flightTime == null || !claimedSlots.TryGetValue(g.Id, out var claimed) || !HasTimeConflict(flightTime.Value, claimed)));
     }
 
-    private static CascadeContextCrew? FindAvailableCrew(List<CascadeContextCrew> crews, DateTime? flightTime)
+    private static CascadeContextCrew? FindAvailableCrew(
+        List<CascadeContextCrew> crews, DateTime? flightTime,
+        Dictionary<Guid, List<CascadeContextTimeSlot>> claimedSlots)
     {
         return crews.FirstOrDefault(c =>
             c.Status == CrewStatus.Available
             && (flightTime == null || IsInShift(TimeOnly.FromDateTime(flightTime.Value), c.ShiftStart, c.ShiftEnd))
-            && (flightTime == null || !c.OccupiedSlots.Any(s => flightTime.Value >= s.Start && flightTime.Value < s.End)));
+            && (flightTime == null || !c.OccupiedSlots.Any(s => flightTime.Value >= s.Start && flightTime.Value < s.End))
+            && (flightTime == null || !claimedSlots.TryGetValue(c.Id, out var claimed) || !HasTimeConflict(flightTime.Value, claimed)));
     }
 
     private static bool IsInShift(TimeOnly time, TimeOnly shiftStart, TimeOnly shiftEnd)
